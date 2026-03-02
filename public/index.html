@@ -1486,7 +1486,7 @@ async function loadPlaygroundModels() {
   // Custom provider dropdown
   const customProvSel = document.getElementById("pg-custom-provider");
   const providers = await fetch(API+"/providers").then(r=>r.json());
-  customProvSel.innerHTML = providers.map(p => `<option value="${p.id}" data-base="${p.baseUrl}" data-key="${p.apiKey}" data-type="${p.apiType}">${p.name} (${p.apiType})</option>`).join("");
+  customProvSel.innerHTML = providers.map(p => { const tags = (p.tags||"").split(",").filter(t=>t.trim()).map(t=>t.trim()).join(" · "); return `<option value="${p.id}" data-base="${p.baseUrl}" data-key="${p.apiKey}" data-type="${p.apiType}">${p.name} (${p.apiType})${tags ? " — "+tags : ""}</option>`; }).join("");
 
   // Chains grid
   const cg = document.getElementById("pg-chain-grid");
