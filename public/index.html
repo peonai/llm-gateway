@@ -152,6 +152,11 @@ body {
 .badge-healthy { background: rgba(0,255,136,0.15); color: var(--green); }
 .badge-cooldown { background: rgba(255,170,0,0.15); color: var(--amber); }
 .badge-offline { background: rgba(255,51,85,0.15); color: var(--red); }
+
+.badge-unknown { background: rgba(122,122,138,0.15); color: var(--text-dim); }
+.badge-error { background: rgba(255,51,85,0.15); color: var(--red); }
+.badge-warn { background: rgba(255,170,0,0.15); color: var(--amber); }
+
 .card-actions { display: flex; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
 
 /* Buttons */
@@ -854,16 +859,33 @@ async function loadModels() {
   const models = await fetch(API+'/models').then(r=>r.json());
   const stats = await fetch(API+'/stats').then(r=>r.json());
   const cd = stats.cooldowns||{};
+  const depStats = stats.deploymentStats||{};
   const g = document.getElementById('model-grid');
   if (!models.length) { g.innerHTML = '<div style="color:var(--text-dim);padding:40px;text-align:center">No models. Add one to start.</div>'; return; }
   g.innerHTML = models.map(m => {
     const deps = (m.deployments||[]).map(d => {
       const isCd = cd[d.id];
-      const sb = !d.enabled ? '<span class="card-badge badge-offline">disabled</span>' : isCd ? '<span class="card-badge badge-cooldown">cooldown</span>' : '<span class="card-badge badge-healthy">healthy</span>';
-      return `<div class="dep-item" draggable="true" data-dep-id="${d.id}" data-model-id="${m.id}"
+      const ds = depStats[d.id];
+      let sb;
+      if (!d.enabled) {
+        sb = '<span class="card-badge badge-offline">disabled</span>';
+      } else if (isCd) {
+        sb = '<span class="card-badge badge-cooldown">cooldown</span>';
+      } else if (!ds || ds.totalRequests === 0) {
+        sb = '<span class="card-badge badge-unknown">untested</span>';
+      } else if (ds.successRate < 0.5) {
+        sb = '<span class="card-badge badge-error">failing ' + Math.round(ds.successRate*100) + '%</span>';
+      } else if (ds.successRate < 0.9) {
+        sb = '<span class="card-badge badge-warn">degraded ' + Math.round(ds.successRate*100) + '%</span>';
+      } else {
+        sb = '<span class="card-badge badge-healthy">healthy ' + Math.round(ds.successRate*100) + '%</span>';
+      }
+      return `<div class="dep-item" draggable="false" data-dep-id="${d.id}" data-model-id="${m.id}"
         ondragstart="depDragStart(event)" ondragover="depDragOver(event)" ondragleave="depDragLeave(event)"
         ondrop="depDrop(event)" ondragend="depDragEnd(event)">
-        <span style="cursor:grab;color:var(--text-dim);margin-right:4px">⠿</span><span class="dep-order">#${d.order}</span><span class="dep-model">${esc(d.modelName)}</span><span class="dep-provider">${esc(d.providerName)}</span>${sb}<button class="btn btn-sm btn-icon" onclick="openDeployModal('${m.id}',{id:'${d.id}',modelName:'${esc(d.modelName)}',providerId:'${d.providerId}',order:${d.order},timeout:${d.timeout},maxRetries:${d.maxRetries}})" title="Edit">✎</button><button class="btn btn-sm btn-icon" onclick="toggleDeployment('${d.id}',${d.enabled})" title="${d.enabled?'Disable':'Enable'}">${d.enabled?'⏸':'▶'}</button><button class="btn btn-sm btn-icon btn-danger" onclick="deleteDeployment('${d.id}')" title="Remove">✕</button></div>`;
+        <span class="dep-drag-handle" style="cursor:grab;color:var(--text-dim);margin-right:4px;padding:2px 4px"
+          onmousedown="this.parentElement.draggable=true"
+          onmouseup="this.parentElement.draggable=false">⠿</span><span class="dep-model">${esc(d.modelName)}</span><span class="dep-provider">${esc(d.providerName)}</span>${sb}<button class="btn btn-sm btn-icon" onclick="openDeployModal('${m.id}',{id:'${d.id}',modelName:'${esc(d.modelName)}',providerId:'${d.providerId}',order:${d.order},timeout:${d.timeout},maxRetries:${d.maxRetries}})" title="Edit">✎</button><button class="btn btn-sm btn-icon" onclick="toggleDeployment('${d.id}',${d.enabled})" title="${d.enabled?'Disable':'Enable'}">${d.enabled?'⏸':'▶'}</button><button class="btn btn-sm btn-icon btn-danger" onclick="deleteDeployment('${d.id}')" title="Remove">✕</button></div>`;
     }).join('');
     return `<div class="card"><div class="card-header"><div class="card-title">${esc(m.name)}</div><div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="openModelModal({id:'${m.id}',name:'${esc(m.name).replace(/'/g,"\\'")}'})">Edit</button><button class="btn btn-sm btn-danger" onclick="deleteModel('${m.id}','${esc(m.name)}')">Delete</button></div></div><div>${deps||'<div style="color:var(--text-dim);font-size:11px;padding:8px">No deployments</div>'}</div><div class="card-actions"><button class="btn btn-sm btn-primary" onclick="openDeployModal('${m.id}')">+ Add Deployment</button></div></div>`;
   }).join('');
@@ -881,6 +903,7 @@ function depDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('dep
 function depDragLeave(e) { e.currentTarget.classList.remove('dep-drag-over'); }
 function depDragEnd(e) {
   e.currentTarget.classList.remove('dep-dragging');
+  e.currentTarget.draggable = false;
   document.querySelectorAll('.dep-drag-over').forEach(el => el.classList.remove('dep-drag-over'));
 }
 async function depDrop(e) {

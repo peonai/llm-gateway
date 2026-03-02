@@ -124,7 +124,14 @@ api.delete("/deployments/:id", (c) => {
 // --- Stats ---
 api.get("/stats", (c) => {
   const summary = db.getLogSummary();
-  const allStats = db.getAllStats();
+  const rawStats = db.getAllStats() as any[];
+  const allStats: Record<string, any> = {};
+  for (const s of rawStats) {
+    allStats[s.deploymentId] = {
+      ...s,
+      successRate: s.totalRequests > 0 ? s.successCount / s.totalRequests : 0,
+    };
+  }
   const cooldownInfo = getCooldownInfo();
   const providerCount = (db.listProviders() as any[]).length;
   const modelCount = (db.listModels() as any[]).length;
