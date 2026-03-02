@@ -698,18 +698,22 @@ let autoRefresh = true;
 const MODEL_COLORS = ['#00ff88','#4488ff','#ffaa00','#aa66ff','#00ccff','#ff3355','#ff88aa','#88ff00'];
 
 // --- Nav ---
+function switchTab(page) {
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.page === page));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const el = document.getElementById('page-' + page);
+  if (el) el.classList.add('active');
+  location.hash = page;
+  if (page === 'logs') loadLogs();
+  if (page === 'keys') loadKeys();
+  if (page === 'chains') loadChains();
+  if (page === 'playground') loadPlaygroundModels();
+}
 document.querySelectorAll('.nav-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById('page-' + tab.dataset.page).classList.add('active');
-    if (tab.dataset.page === 'logs') loadLogs();
-    if (tab.dataset.page === 'keys') loadKeys();
-    if (tab.dataset.page === 'chains') loadChains();
-    if (tab.dataset.page === 'playground') loadPlaygroundModels();
-  });
+  tab.addEventListener('click', () => switchTab(tab.dataset.page));
 });
+// Restore tab from hash on load
+window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (h) switchTab(h); });
 
 // --- Toast ---
 function toast(msg, type='success') {
@@ -1411,6 +1415,8 @@ function renderTrace(trace) {
 }
 
 // Init
+const initTab = location.hash.slice(1);
+if (initTab && document.getElementById('page-' + initTab)) { switchTab(initTab); } else { switchTab('dashboard'); }
 loadDashboard(); loadProviders(); loadModels(); loadKeys(); loadChains();
 setInterval(() => {
   if (!autoRefresh) return;
