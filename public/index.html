@@ -599,13 +599,12 @@ body {
         <div id="pg-custom-grid" style="display:none">
           <div class="form-group">
             <label>Model Name</label>
-            <input type="text" id="pg-custom-model" placeholder="Model name at provider (e.g. claude-sonnet-4-20250514)">
+            <input type="text" id="pg-custom-model" placeholder="e.g. claude-sonnet-4-20250514" oninput="pgUpdateCustom()">
           </div>
           <div class="form-group">
             <label>Provider</label>
-            <select id="pg-custom-provider"></select>
+            <select id="pg-custom-provider" onchange="pgUpdateCustom()"></select>
           </div>
-          <button class="btn" onclick="pgSelectCustom()" style="width:100%;margin-top:8px">Select</button>
         </div>
 
         <input type="hidden" id="pg-model" value="">
@@ -1511,17 +1510,15 @@ async function loadPlaygroundModels() {
   }
 }
 
-function pgSelectCustom() {
+function pgUpdateCustom() {
   const model = document.getElementById("pg-custom-model").value;
   const provEl = document.getElementById("pg-custom-provider");
   const provId = provEl.value;
   const provName = provEl.options[provEl.selectedIndex]?.text || "";
-  if (!model) { toast("Model name required", "error"); return; }
+  if (!model) return;
   pgSelected = { type: "custom", name: model, providerId: provId, providerName: provName };
   document.getElementById("pg-model").value = model;
-  // Visual feedback
   document.querySelectorAll(".pg-selector-item").forEach(el => el.classList.remove("selected"));
-  toast("Custom: " + model + " via " + provName);
 }
 
 async function runPlayground() {
