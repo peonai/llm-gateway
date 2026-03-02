@@ -586,6 +586,11 @@ body {
   </div>
 
 
+  <div class="section-title" style="margin-top:24px">Last Request</div>
+  <div id="last-request-card" style="margin-bottom:20px">
+    <div style="color:var(--text-dim);font-size:11px;padding:16px;text-align:center">No requests yet</div>
+  </div>
+
   <!-- PLAYGROUND -->
   <div class="page" id="page-playground">
     <div class="section-title" style="margin-bottom:16px">Route Playground</div>
@@ -811,6 +816,7 @@ function openProviderModal(p) {
   document.getElementById('provider-url').value = p?.baseUrl || '';
   document.getElementById('provider-key').value = p?.apiKey || '';
   document.getElementById('provider-type').value = p?.apiType || 'openai';
+  document.getElementById('prov-tags').value = p?.tags || '';
   document.getElementById('provider-modal-title').textContent = p ? 'Edit Provider' : 'Add Provider';
   document.getElementById('provider-modal').classList.add('open');
 }
@@ -823,7 +829,8 @@ async function saveProvider() {
   closeModal('provider-modal'); toast(id ? 'Provider updated' : 'Provider added'); loadProviders(); loadModels(); loadChains();
 }
 
-async function deleteProvider(id, name) { if (!confirm('Delete "'+name+'"?')) return; await fetch(API+'/providers/'+id,{method:'DELETE'}); toast('Deleted'); loadProviders(); loadModels(); loadChains(); loadDashboard(); }
+async function deleteProvider(id, name) { if (!confirm('Delete "'+name+'"?')) return; await fetch(API+'/providers/'+id,{method:'DELETE'}); toast('Deleted'); loadProviders(); loadModels(); loadChains(); loadDashboard();
+  loadLastRequest(); }
 
 async function testProvider(id) {
   const btn = event.target; btn.textContent = '...';
@@ -1619,6 +1626,24 @@ function renderTrace(trace) {
   </div>`;
 
   traceEl.innerHTML = `<div class="trace-flow">${stepsHtml}</div>${summaryHtml}`;
+}
+
+
+// --- Last Request ---
+async function loadLastRequest() {
+  const logs = await fetch(API+"/logs?limit=1").then(r=>r.json());
+  const el = document.getElementById("last-request-card");
+  if (!logs.length) { el.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:16px;text-align:center">No requests yet</div>'; return; }
+  const l = logs[0];
+  const time = new Date(l.createdAt).toLocaleString();
+  const sc = l.status>=200&&l.status<300?'var(--green)':l.status>=400&&l.status<500?'var(--amber)':'var(--red)';
+  el.innerHTML = `<div style="display:flex;gap:16px;align-items:center;padding:12px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius)">
+    <div style="flex:1">
+      <div style="font-size:13px;font-weight:600;color:var(--green)">${esc(l.providerName||'-')} <span style="color:var(--text-dim);font-weight:400">/</span> ${esc(l.model||'-')}</div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px">${time} · ${l.latencyMs}ms</div>
+    </div>
+    <span style="font-size:18px;font-weight:700;color:${sc}">${l.status}</span>
+  </div>`;
 }
 
 // Init
