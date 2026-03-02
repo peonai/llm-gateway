@@ -917,9 +917,18 @@ async function loadModels() {
       return `<div class="dep-item" draggable="false" data-dep-id="${d.id}" data-model-id="${m.id}"
         ondragstart="depDragStart(event)" ondragover="depDragOver(event)" ondragleave="depDragLeave(event)"
         ondrop="depDrop(event)" ondragend="depDragEnd(event)">
-        <span class="dep-drag-handle" style="cursor:grab;color:var(--text-dim);margin-right:4px;padding:2px 4px"
+        <span class="dep-drag-handle" style="cursor:grab;color:var(--text-dim);padding:2px 4px"
           onmousedown="this.parentElement.draggable=true"
-          onmouseup="this.parentElement.draggable=false">⠿</span><span class="dep-model">${esc(d.modelName)}</span><span class="dep-provider">${esc(d.providerName)}</span>${sb}<button class="btn btn-sm btn-icon" onclick="openDeployModal('${m.id}',{id:'${d.id}',modelName:'${esc(d.modelName)}',providerId:'${d.providerId}',order:${d.order},timeout:${d.timeout},maxRetries:${d.maxRetries}})" title="Edit">✎</button><button class="btn btn-sm btn-icon" onclick="toggleDeployment('${d.id}',${d.enabled})" title="${d.enabled?'Disable':'Enable'}">${d.enabled?'⏸':'▶'}</button><button class="btn btn-sm btn-icon btn-danger" onclick="deleteDeployment('${d.id}')" title="Remove">✕</button></div>`;
+          onmouseup="this.parentElement.draggable=false">⠿</span>
+        <div class="dep-info">
+          <div class="dep-main"><span class="dep-model">${esc(d.modelName)}</span>${sb}</div>
+          <div class="dep-meta"><span class="dep-provider">${esc(d.providerName)}</span><span>timeout ${d.timeout}s</span><span>retry ×${d.maxRetries}</span></div>
+        </div>
+        <div class="dep-actions">
+          <button class="btn btn-sm btn-icon" onclick="openDeployModal('${m.id}',{id:'${d.id}',modelName:'${esc(d.modelName)}',providerId:'${d.providerId}',order:${d.order},timeout:${d.timeout},maxRetries:${d.maxRetries}})" title="Edit">✎</button>
+          <button class="btn btn-sm btn-icon" onclick="toggleDeployment('${d.id}',${d.enabled})" title="${d.enabled?'Disable':'Enable'}">${d.enabled?'⏸':'▶'}</button>
+          <button class="btn btn-sm btn-icon btn-danger" onclick="deleteDeployment('${d.id}')" title="Remove">✕</button>
+        </div></div>`;
     }).join('');
     return `<div class="card"><div class="card-header"><div class="card-title">${esc(m.name)}</div><div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="openModelModal({id:'${m.id}',name:'${esc(m.name).replace(/'/g,"\\'")}'})">Edit</button><button class="btn btn-sm btn-danger" onclick="deleteModel('${m.id}','${esc(m.name)}')">Delete</button></div></div><div>${deps||'<div style="color:var(--text-dim);font-size:11px;padding:8px">No deployments</div>'}</div><div class="card-actions"><button class="btn btn-sm btn-primary" onclick="openDeployModal('${m.id}')">+ Add Deployment</button></div></div>`;
   }).join('');
