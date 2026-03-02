@@ -148,6 +148,16 @@ api.get("/logs", (c) => {
   return c.json(db.listLogs(limit, offset, { model, status, provider }));
 });
 
+// Sticky routes
+api.delete("/sticky/:model", (c) => {
+  clearStickyRoute(decodeURIComponent(c.req.param("model")));
+  return c.json({ ok: true });
+});
+api.delete("/sticky", (c) => {
+  clearStickyRoute();
+  return c.json({ ok: true });
+});
+
 export default api;
 
 // --- API Keys ---
