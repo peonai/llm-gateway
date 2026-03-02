@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import * as db from "./db";
-import { getCooldownInfo } from "./router";
+import { getCooldownInfo, routeTestDirect } from "./router";
 
 const api = new Hono();
 
@@ -212,6 +212,7 @@ api.post("/test-route", async (c) => {
   const body = await c.req.json();
   const model = body.model;
   const message = body.message || "hi";
+  const providerId = body.providerId;
   if (!model) return c.json({ error: "model is required" }, 400);
 
   const testBody = {
@@ -219,6 +220,14 @@ api.post("/test-route", async (c) => {
     max_tokens: 20,
     messages: [{ role: "user", content: message }],
   };
+
+  // Custom mode: direct provider test (bypass routing)
+  if (providerId) {
+    const provider = db.getProvider(providerId);
+    if (!provider) return c.json({ error: "provider not found" }, 404);
+    const trace = await routeTestDirect(model, provider, c.req.raw.headers, testBody);
+    return c.json(trace);
+  }
 
   const trace = await routeTestRequest(model, "/v1/messages", "POST", c.req.raw.headers, testBody);
   return c.json(trace);

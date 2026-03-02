@@ -343,3 +343,53 @@ export async function routeTestRequest(requestModelName: string, path: string, m
 
   return trace;
 }
+
+// Direct provider test (bypass routing, for Playground custom mode)
+export async function routeTestDirect(modelName: string, provider: any, headers: Headers, body: any): Promise<RouteTrace> {
+  const traceStart = Date.now();
+  const trace: RouteTrace = { requestModel: modelName, steps: [], success: false, totalLatencyMs: 0 };
+
+  trace.steps.push({ action: "try_deployment", model: modelName, provider: provider.name });
+
+  const isAnthropic = provider.apiType === "anthropic";
+  const path = isAnthropic ? "/v1/messages" : "/v1/chat/completions";
+  const url = `${provider.baseUrl.replace(/\/$/, "")}${path}`;
+
+  const outHeaders: Record<string, string> = { "Content-Type": "application/json" };
+  if (isAnthropic) {
+    outHeaders["x-api-key"] = provider.apiKey;
+    outHeaders["anthropic-version"] = headers.get("anthropic-version") || "2023-06-01";
+  } else {
+    outHeaders["Authorization"] = `Bearer ${provider.apiKey}`;
+  }
+
+  let requestBody: any;
+  if (isAnthropic) {
+    requestBody = { model: modelName, max_tokens: body.max_tokens || 20, messages: body.messages || [{ role: "user", content: "hi" }] };
+  } else {
+    requestBody = { model: modelName, max_tokens: body.max_tokens || 20, messages: body.messages || [{ role: "user", content: "hi" }] };
+  }
+
+  const start = Date.now();
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const resp = await fetch(url, { method: "POST", headers: outHeaders, body: JSON.stringify(requestBody), signal: controller.signal });
+    clearTimeout(timeoutId);
+    const latencyMs = Date.now() - start;
+
+    if (resp.ok) {
+      trace.steps.push({ action: "success", provider: provider.name, model: modelName, status: resp.status, latencyMs });
+      trace.success = true;
+      trace.finalDeployment = { provider: provider.name, model: modelName };
+    } else {
+      const errText = await resp.text().catch(() => "");
+      trace.steps.push({ action: "fail", provider: provider.name, model: modelName, status: resp.status, error: errText.slice(0, 200) });
+    }
+  } catch (err: any) {
+    trace.steps.push({ action: "fail", provider: provider.name, model: modelName, error: err.message });
+  }
+
+  trace.totalLatencyMs = Date.now() - traceStart;
+  return trace;
+}
