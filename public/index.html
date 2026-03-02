@@ -1687,11 +1687,11 @@ async function loadLastRequest() {
 // Init
 const initTab = location.hash.slice(1);
 if (initTab && document.getElementById('page-' + initTab)) { switchTab(initTab); } else { switchTab('dashboard'); }
-loadDashboard(); loadProviders(); loadModels(); loadKeys(); loadChains();
+loadDashboard(); loadLastRequest(); loadStickyRoutes(); loadProviders(); loadModels(); loadKeys(); loadChains();
 setInterval(() => {
   if (!autoRefresh) return;
   const p = document.querySelector('.page.active')?.id;
-  if (p==='page-dashboard') loadDashboard();
+  if (p==='page-dashboard') { loadDashboard(); loadLastRequest(); loadStickyRoutes(); }
   else if (p==='page-logs') loadLogs();
 }, 5000);
 </script>
