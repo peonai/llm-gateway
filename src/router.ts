@@ -239,7 +239,7 @@ async function tryDeployment(
 
 // --- Sticky routing: prefer last successful deployment for 2 hours ---
 const STICKY_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
-const stickyMap = new Map<string, { deploymentId: string; until: number }>();
+const stickyMap = new Map<string, { deploymentId: string; until: number; manual?: boolean }>();
 
 function getStickyDeployment(modelName: string): string | null {
   const entry = stickyMap.get(modelName);
@@ -253,8 +253,11 @@ export function clearStickyRoute(modelName?: string) {
   else stickyMap.clear();
 }
 
-export function setStickyDeployment(modelName: string, deploymentId: string, ttlMs?: number) {
-  stickyMap.set(modelName, { deploymentId, until: Date.now() + (ttlMs ?? STICKY_TTL_MS) });
+export function setStickyDeployment(modelName: string, deploymentId: string, ttlMs?: number, manual?: boolean) {
+  const existing = stickyMap.get(modelName);
+  // Don't overwrite a manual pin with an automatic one
+  if (existing && existing.manual && !manual && Date.now() < existing.until) return;
+  stickyMap.set(modelName, { deploymentId, until: Date.now() + (ttlMs ?? STICKY_TTL_MS), manual: !!manual });
 }
 
 export function getStickyInfo(): Record<string, { deploymentId: string; remainingMs: number; providerName?: string; modelName?: string }> {
@@ -268,6 +271,7 @@ export function getStickyInfo(): Record<string, { deploymentId: string; remainin
         remainingMs: entry.until - now,
         providerName: dep?.providerName,
         modelName: dep?.modelName,
+        manual: !!entry.manual,
       };
     }
   }

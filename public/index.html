@@ -1746,7 +1746,7 @@ async function loadStickyRoutes() {
         <span style="color:var(--text-dim)">${esc(model)}</span>
         <span style="color:var(--text-dim)">→</span>
         <span style="color:var(--cyan)">${esc(s.providerName||"?")}</span>
-        <span style="color:var(--text-dim);font-size:9px" title="${Math.round(s.remainingMs/60000)}min remaining">until ${untilTime}</span>
+        <span style="color:var(--text-dim);font-size:9px" title="${Math.round(s.remainingMs/60000)}min remaining">${s.manual?'📌 ':''}until ${untilTime}</span>
         <button onclick="clearSticky('${esc(model)}')" title="Clear sticky" style="margin-left:2px;background:none;border:none;color:var(--text-dim);cursor:pointer;padding:0 2px;font-size:11px;line-height:1" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--text-dim)'">×</button>
       </div>`;
     }).join("")}

@@ -153,7 +153,7 @@ api.post("/sticky", async (c) => {
   const { modelName, deploymentId, ttlMs } = await c.req.json();
   if (!modelName || !deploymentId) return c.json({ error: "modelName and deploymentId required" }, 400);
   const safeTtl = typeof ttlMs === "number" && ttlMs > 0 ? ttlMs : undefined;
-  setStickyDeployment(modelName, deploymentId, safeTtl);
+  setStickyDeployment(modelName, deploymentId, safeTtl, true);
   return c.json({ ok: true });
 });
 api.delete("/sticky/:model", (c) => {
