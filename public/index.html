@@ -148,6 +148,11 @@ body {
   font-weight: 600; text-transform: uppercase;
 }
 .badge-openai { background: rgba(68,136,255,0.15); color: var(--blue); }
+
+.prov-tag {
+  display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 10px;
+  background: rgba(122,122,138,0.15); color: var(--text-dim); font-weight: 500;
+}
 .badge-anthropic { background: rgba(255,170,0,0.15); color: var(--amber); }
 .badge-healthy { background: rgba(0,255,136,0.15); color: var(--green); }
 .badge-cooldown { background: rgba(255,170,0,0.15); color: var(--amber); }
@@ -499,11 +504,11 @@ body {
   <div class="nav-logo">LLM<span>/</span>Gateway</div>
   <div class="nav-tabs">
     <div class="nav-tab active" data-page="dashboard">Dashboard</div>
+    <div class="nav-tab" data-page="playground">Playground</div>
     <div class="nav-tab" data-page="providers">Providers</div>
     <div class="nav-tab" data-page="models">Models</div>
     <div class="nav-tab" data-page="chains">Chains</div>
     <div class="nav-tab" data-page="keys">API Keys</div>
-    <div class="nav-tab" data-page="playground">Playground</div>
     <div class="nav-tab" data-page="logs">Logs</div>
   </div>
   <div class="nav-right">
@@ -670,6 +675,7 @@ body {
     <div class="form-group"><label>API Type</label>
       <select id="provider-type"><option value="openai">OpenAI Compatible</option><option value="anthropic">Anthropic Messages</option></select>
     </div>
+    <div class="form-group"><label>Tags (comma separated)</label><input type="text" id="prov-tags" placeholder="e.g. cheap, fast, backup"></div>
     <div class="modal-actions"><button class="btn" onclick="closeModal('provider-modal')">Cancel</button><button class="btn btn-primary" onclick="saveProvider()">Save</button></div>
   </div>
 </div>
@@ -835,7 +841,8 @@ async function loadProviders() {
   g.innerHTML = ps.map(p => {
     const badge = p.apiType==='anthropic' ? 'badge-anthropic' : 'badge-openai';
     const masked = p.apiKey ? p.apiKey.slice(0,8)+'...'+p.apiKey.slice(-4) : 'none';
-    return `<div class="card"><div class="card-header"><div><div class="card-title">${esc(p.name)}</div><div class="card-meta">${esc(p.baseUrl)}</div></div><span class="card-badge ${badge}">${p.apiType}</span></div><div class="card-meta">Key: ${masked}</div><div class="card-actions"><button class="btn btn-sm" onclick="testProvider('${p.id}')">Test</button><button class="btn btn-sm" onclick='openProviderModal(${JSON.stringify(p)})'>Edit</button><button class="btn btn-sm btn-danger" onclick="deleteProvider('${p.id}','${esc(p.name)}')">Delete</button></div></div>`;
+    const tags = (p.tags||'').split(',').filter(t=>t.trim()).map(t => `<span class="prov-tag">${esc(t.trim())}</span>`).join('');
+    return `<div class="card"><div class="card-header"><div><div class="card-title">${esc(p.name)}</div><div class="card-meta">${esc(p.baseUrl)}</div></div><div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap"><span class="card-badge ${badge}">${p.apiType}</span>${tags}</div></div><div class="card-meta">Key: ${masked}</div><div class="card-actions"><button class="btn btn-sm" onclick="testProvider('${p.id}')">Test</button><button class="btn btn-sm" onclick='openProviderModal(${JSON.stringify(p)})'>Edit</button><button class="btn btn-sm btn-danger" onclick="deleteProvider('${p.id}','${esc(p.name)}')">Delete</button></div></div>`;
   }).join('');
 }
 
@@ -920,7 +927,7 @@ async function loadModels() {
           onmousedown="this.parentElement.draggable=true"
           onmouseup="this.parentElement.draggable=false">⠿</span>
         <div class="dep-info">
-          <div class="dep-main"><span class="dep-model">${esc(d.modelName)}</span>${sb}</div>
+          <div class="dep-main"><span class="dep-model">${esc(d.modelName)}</span><span style="margin-left:auto">${sb}</span></div>
           <div class="dep-meta"><span class="dep-provider">${esc(d.providerName)}</span><span>·</span><span>timeout ${d.timeout}s</span><span>·</span><span>retry ×${d.maxRetries}</span></div>
           <div class="dep-actions">
             <button class="btn btn-sm btn-icon" onclick="openDeployModal('${m.id}',{id:'${d.id}',modelName:'${esc(d.modelName)}',providerId:'${d.providerId}',order:${d.order},timeout:${d.timeout},maxRetries:${d.maxRetries}})" title="Edit">✎</button>
