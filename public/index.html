@@ -638,7 +638,8 @@ body {
 <!-- DEPLOYMENT MODAL -->
 <div class="modal-overlay" id="deploy-modal">
   <div class="modal">
-    <div class="modal-title">Add Deployment</div>
+    <div class="modal-title" id="deploy-modal-title">Add Deployment</div>
+    <input type="hidden" id="deploy-edit-id">
     <input type="hidden" id="deploy-model-id">
     <div class="form-group"><label>Provider</label><select id="deploy-provider"></select></div>
     <div class="form-group"><label>Actual Model Name (at provider)</label><input type="text" id="deploy-model-name" placeholder="e.g. claude-opus-4-5"></div>
@@ -794,22 +795,30 @@ async function saveModel() {
 }
 async function deleteModel(id,name) { if(!confirm('Delete "'+name+'"?'))return; await fetch(API+'/models/'+id,{method:'DELETE'}); toast('Deleted'); loadModels(); loadChains(); loadDashboard(); }
 
-function openDeployModal(modelId) {
+function openDeployModal(modelId, dep) {
+  document.getElementById('deploy-edit-id').value = dep?.id || '';
   document.getElementById('deploy-model-id').value = modelId;
-  document.getElementById('deploy-model-name').value = '';
-  document.getElementById('deploy-order').value = '1';
-  document.getElementById('deploy-timeout').value = '60';
-  document.getElementById('deploy-retries').value = '2';
+  document.getElementById('deploy-model-name').value = dep?.modelName || '';
+  document.getElementById('deploy-order').value = dep?.order || '1';
+  document.getElementById('deploy-timeout').value = dep?.timeout || '60';
+  document.getElementById('deploy-retries').value = dep?.maxRetries ?? '2';
+  document.getElementById('deploy-modal-title').textContent = dep ? 'Edit Deployment' : 'Add Deployment';
   fetch(API+'/providers').then(r=>r.json()).then(ps => {
-    document.getElementById('deploy-provider').innerHTML = ps.map(p=>`<option value="${p.id}">${p.name} (${p.apiType})</option>`).join('');
+    document.getElementById('deploy-provider').innerHTML = ps.map(p=>`<option value="${p.id}" ${dep && dep.providerId===p.id ? 'selected' : ''}>${p.name} (${p.apiType})</option>`).join('');
   });
   document.getElementById('deploy-modal').classList.add('open');
 }
 async function saveDeployment() {
+  const id = document.getElementById('deploy-edit-id').value;
   const data = { modelId: document.getElementById('deploy-model-id').value, providerId: document.getElementById('deploy-provider').value, modelName: document.getElementById('deploy-model-name').value, order: parseInt(document.getElementById('deploy-order').value), timeout: parseInt(document.getElementById('deploy-timeout').value), maxRetries: parseInt(document.getElementById('deploy-retries').value) };
   if (!data.modelName||!data.providerId) { toast('Provider and model name required','error'); return; }
-  await fetch(API+'/deployments',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-  closeModal('deploy-modal'); toast('Deployment added'); loadModels(); loadDashboard();
+  if (id) {
+    await fetch(API+'/deployments/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    closeModal('deploy-modal'); toast('Deployment updated'); loadModels(); loadDashboard();
+  } else {
+    await fetch(API+'/deployments',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    closeModal('deploy-modal'); toast('Deployment added'); loadModels(); loadDashboard();
+  }
 }
 async function deleteDeployment(id) { await fetch(API+'/deployments/'+id,{method:'DELETE'}); toast('Removed'); loadModels(); loadDashboard(); }
 async function toggleDeployment(id,en) { await fetch(API+'/deployments/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:en?0:1})}); loadModels(); }
@@ -824,7 +833,7 @@ async function loadModels() {
     const deps = (m.deployments||[]).map(d => {
       const isCd = cd[d.id];
       const sb = !d.enabled ? '<span class="card-badge badge-offline">disabled</span>' : isCd ? '<span class="card-badge badge-cooldown">cooldown</span>' : '<span class="card-badge badge-healthy">healthy</span>';
-      return `<div class="dep-item"><span class="dep-order">#${d.order}</span><span class="dep-model">${esc(d.modelName)}</span><span class="dep-provider">${esc(d.providerName)}</span>${sb}<button class="btn btn-sm btn-icon" onclick="toggleDeployment('${d.id}',${d.enabled})" title="${d.enabled?'Disable':'Enable'}">${d.enabled?'⏸':'▶'}</button><button class="btn btn-sm btn-icon btn-danger" onclick="deleteDeployment('${d.id}')" title="Remove">✕</button></div>`;
+      return `<div class="dep-item"><span class="dep-order">#${d.order}</span><span class="dep-model">${esc(d.modelName)}</span><span class="dep-provider">${esc(d.providerName)}</span>${sb}<button class="btn btn-sm btn-icon" onclick="openDeployModal('${m.id}',{id:'${d.id}',modelName:'${esc(d.modelName)}',providerId:'${d.providerId}',order:${d.order},timeout:${d.timeout},maxRetries:${d.maxRetries}})" title="Edit">✎</button><button class="btn btn-sm btn-icon" onclick="toggleDeployment('${d.id}',${d.enabled})" title="${d.enabled?'Disable':'Enable'}">${d.enabled?'⏸':'▶'}</button><button class="btn btn-sm btn-icon btn-danger" onclick="deleteDeployment('${d.id}')" title="Remove">✕</button></div>`;
     }).join('');
     return `<div class="card"><div class="card-header"><div class="card-title">${esc(m.name)}</div><button class="btn btn-sm" onclick="openModelModal({id:'${m.id}',name:'${esc(m.name).replace(/'/g,"\\'")}'})">Edit</button>
         <button class="btn btn-sm btn-danger" onclick="deleteModel('${m.id}','${esc(m.name)}')">Delete</button></div><div>${deps||'<div style="color:var(--text-dim);font-size:11px;padding:8px">No deployments</div>'}</div><div class="card-actions"><button class="btn btn-sm btn-primary" onclick="openDeployModal('${m.id}')">+ Add Deployment</button></div></div>`;
