@@ -36,6 +36,17 @@ npm run dev:node
 
 Open `http://localhost:3456/ui` to access the management dashboard.
 
+## For AI Agents
+
+If you're an AI agent with tool access and need to add a new LLM provider to this gateway, read `llms.txt` at the gateway URL for the full API reference:
+
+```
+Read http://<gateway-host>:<port>/llms.txt and use the management API to add providers, models, and deployments.
+```
+
+That's it — one line in your system prompt, and the agent can self-configure the gateway.
+
+
 ## Configuration
 
 Set the port via environment variable:

@@ -153,7 +153,17 @@ api.post("/sticky", async (c) => {
   const { modelName, deploymentId, ttlMs } = await c.req.json();
   if (!modelName || !deploymentId) return c.json({ error: "modelName and deploymentId required" }, 400);
   const safeTtl = typeof ttlMs === "number" && ttlMs > 0 ? ttlMs : undefined;
-  setStickyDeployment(modelName, deploymentId, safeTtl, true);
+  // If modelName belongs to a chain, use chain name as key (and clear any model-level sticky)
+  const chains = db.listChains() as any[];
+  const owningChain = chains.find(ch => {
+    try { return (JSON.parse(ch.items) as string[]).includes(modelName); } catch { return false; }
+  });
+  if (owningChain) {
+    clearStickyRoute(modelName); // clear model-level sticky if any
+    setStickyDeployment(owningChain.name, deploymentId, safeTtl, true);
+  } else {
+    setStickyDeployment(modelName, deploymentId, safeTtl, true);
+  }
   return c.json({ ok: true });
 });
 api.delete("/sticky/:model", (c) => {

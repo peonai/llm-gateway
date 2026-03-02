@@ -15,6 +15,7 @@ export interface RouteTrace {
   success: boolean;
   totalLatencyMs: number;
   skipSticky?: boolean;
+  stickyKey?: string; // chain name or model name — single key for sticky/pin
 }
 
 export interface RouteStep {
@@ -183,7 +184,7 @@ async function tryDeployment(
         trace.steps.push({ action: "success", model: dep.modelName, provider: dep.providerName, status: resp.status, latencyMs });
         trace.finalDeployment = { provider: dep.providerName, model: dep.modelName, deploymentId: dep.id };
         trace.success = true;
-        if (!trace.skipSticky) setStickyDeployment(modelName, dep.id);
+        if (!trace.skipSticky) setStickyDeployment(trace.stickyKey || modelName, dep.id);
 
         if (isStreaming && resp.body) {
           return { response: new Response(resp.body, {
@@ -278,12 +279,12 @@ export function getStickyInfo(): Record<string, { deploymentId: string; remainin
   return result;
 }
 
-function getHealthyDeployments(modelName: string, skipSticky = false): Deployment[] {
+function getHealthyDeployments(modelName: string, skipSticky = false, stickyKey?: string): Deployment[] {
   const model: any = getModelByName(modelName);
   if (!model) return [];
   const deps = (listDeployments(model.id) as Deployment[]).filter(d => d.enabled && !isInCooldown(d.id));
   if (!skipSticky) {
-    const stickyId = getStickyDeployment(modelName);
+    const stickyId = getStickyDeployment(stickyKey || modelName);
     if (stickyId) {
       const stickyIdx = deps.findIndex(d => d.id === stickyId);
       if (stickyIdx > 0) {
@@ -297,7 +298,9 @@ function getHealthyDeployments(modelName: string, skipSticky = false): Deploymen
 
 async function routeModel(modelName: string, path: string, method: string, headers: Headers, body: any, isStreaming: boolean, trace: RouteTrace): Promise<Response | null> {
   trace.steps.push({ action: "try_model", model: modelName });
-  const deps = getHealthyDeployments(modelName, trace.skipSticky);
+  // When routing through a chain, check sticky by chain name (stickyKey), not individual model
+  const stickyKey = trace.stickyKey || modelName;
+  const deps = getHealthyDeployments(modelName, trace.skipSticky, stickyKey);
   const model: any = getModelByName(modelName);
   if (model) {
     const allDeps = listDeployments(model.id) as Deployment[];
@@ -346,6 +349,8 @@ export async function routeRequest(requestModelName: string, path: string, metho
   const trace: RouteTrace = { requestModel: requestModelName, steps: [], success: false, totalLatencyMs: 0 };
 
   const chain: any = getChainByName(requestModelName);
+  // When routing through a chain, use chain name as sticky key (not individual model names)
+  if (chain) trace.stickyKey = chain.name;
   let response: Response | null = null;
 
   if (chain) {
@@ -354,6 +359,26 @@ export async function routeRequest(requestModelName: string, path: string, metho
     trace.chainName = chain.name;
     trace.chainMode = chain.mode;
     trace.steps.push({ action: "chain_match", model: chain.name });
+
+    // Try sticky deployment BEFORE chain — skip the whole chain trial if sticky works
+    if (!trace.skipSticky) {
+      const stickyId = getStickyDeployment(chain.name);
+      if (stickyId) {
+        const allDeps = listDeployments() as Deployment[];
+        const stickyDep = allDeps.find(d => d.id === stickyId && d.enabled && !isInCooldown(d.id));
+        if (stickyDep) {
+          trace.steps.push({ action: "try_sticky", model: stickyDep.modelName, provider: stickyDep.providerName, deploymentId: stickyDep.id });
+          const result = await tryDeployment(stickyDep as Deployment, stickyDep.modelName, path, method, headers, body, isStreaming, trace);
+          if (result.final) {
+            trace.totalLatencyMs = Date.now() - traceStart;
+            return (result as any).response;
+          }
+          trace.steps.push({ action: "fallback", provider: stickyDep.providerName, error: "sticky deployment failed, falling through to chain" });
+          // Clear the failed sticky so chain doesn't try it again via getHealthyDeployments
+          clearStickyRoute(chain.name);
+        }
+      }
+    }
 
     if (chain.mode === "models") response = await routeModelsChain(items, path, method, headers, body, isStreaming, trace);
     else if (chain.mode === "provider") response = await routeProviderChain(items, path, method, headers, body, isStreaming, trace);

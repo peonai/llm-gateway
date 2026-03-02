@@ -1,0 +1,55 @@
+# LLM Gateway
+
+> Lightweight LLM API gateway with multi-provider routing, automatic fallback, and sticky routing.
+
+## What It Does
+
+Sits between your app and multiple LLM providers. Routes requests, retries on failure, sticks to working deployments, converts between OpenAI and Anthropic protocols automatically.
+
+## API (Management)
+
+Base: http://localhost:3456/api
+
+### Providers
+- GET /api/providers — list all providers
+- POST /api/providers — create provider { name, baseUrl, apiKey, apiType: "openai"|"anthropic" }
+- PUT /api/providers/:id — update provider
+- DELETE /api/providers/:id — delete provider
+- POST /api/providers/:id/fetch-models — auto-discover models from provider
+
+### Models
+- GET /api/models — list all models
+- POST /api/models — create model { name }
+- PUT /api/models/:id — update model
+- DELETE /api/models/:id — delete model
+
+### Deployments (model → provider binding)
+- GET /api/deployments — list all deployments
+- POST /api/deployments — create { modelId, providerId, modelName, order, timeout, maxRetries, enabled }
+- PUT /api/deployments/:id — update deployment
+- DELETE /api/deployments/:id — delete deployment
+
+### Chains (fallback sequences)
+- GET /api/chains — list chains
+- POST /api/chains — create { name, mode: "models"|"provider", items: JSON }
+- PUT /api/chains/:id — update chain
+- DELETE /api/chains/:id — delete chain
+
+### Sticky/Pin
+- POST /api/sticky — pin deployment { modelName, deploymentId, ttlMs? }
+- DELETE /api/sticky/:model — clear sticky for model/chain
+- DELETE /api/sticky — clear all
+
+### Proxy (LLM requests)
+- POST /v1/chat/completions — OpenAI-compatible
+- POST /v1/messages — Anthropic-compatible
+
+Model name in request maps to a model or chain name in the gateway.
+
+## Typical Setup Flow
+
+1. Create a provider (name, baseUrl, apiKey, apiType)
+2. Fetch or manually create models
+3. Create deployments linking models to providers
+4. Optionally create a chain for fallback routing
+5. Point your app at the gateway's /v1/chat/completions or /v1/messages

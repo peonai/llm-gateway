@@ -1757,24 +1757,44 @@ async function loadStickyRoutes() {
 
 // --- Manual Sticky ---
 async function loadStickySelects() {
-  const models = await fetch(API+"/models").then(r=>r.json());
+  const [models, chains] = await Promise.all([
+    fetch(API+"/models").then(r=>r.json()),
+    fetch(API+"/chains").then(r=>r.json()),
+  ]);
   const ms = document.getElementById("sticky-model-select");
-  ms.innerHTML = '<option value="">Select model...</option>' + models.map(m => `<option value="${esc(m.id)}" data-name="${esc(m.name)}">${esc(m.name)}</option>`).join("");
+  let opts = '<option value="">Select target...</option>';
+  if (chains.length) {
+    opts += '<optgroup label="Chains">' + chains.map(ch => `<option value="chain:${esc(ch.name)}" data-name="${esc(ch.name)}" data-type="chain" data-items='${esc(ch.items)}'>${esc(ch.name)} (chain)</option>`).join("") + '</optgroup>';
+  }
+  opts += '<optgroup label="Models">' + models.map(m => `<option value="${esc(m.id)}" data-name="${esc(m.name)}" data-type="model">${esc(m.name)}</option>`).join("") + '</optgroup>';
+  ms.innerHTML = opts;
   ms.onchange = loadStickyDeps;
 }
 async function loadStickyDeps() {
-  const modelId = document.getElementById("sticky-model-select").value;
+  const sel = document.getElementById("sticky-model-select");
+  const opt = sel.selectedOptions[0];
   const ds = document.getElementById("sticky-dep-select");
-  if (!modelId) { ds.innerHTML = '<option value="">Select deployment...</option>'; return; }
+  if (!opt || !opt.value) { ds.innerHTML = '<option value="">Select deployment...</option>'; return; }
   const deps = await fetch(API+"/deployments").then(r=>r.json());
-  const filtered = deps.filter(d => d.modelId === modelId);
+  let filtered;
+  if (opt.dataset.type === "chain") {
+    // Show all deployments for models in this chain
+    let chainModels = [];
+    try { chainModels = JSON.parse(opt.dataset.items || "[]"); } catch {}
+    const models = await fetch(API+"/models").then(r=>r.json());
+    const modelIds = models.filter(m => chainModels.includes(m.name)).map(m => m.id);
+    filtered = deps.filter(d => modelIds.includes(d.modelId));
+  } else {
+    filtered = deps.filter(d => d.modelId === opt.value);
+  }
   ds.innerHTML = '<option value="">Select deployment...</option>' + filtered.map(d => `<option value="${d.id}">${esc(d.providerName)} / ${esc(d.modelName)}</option>`).join("");
 }
 async function manualSticky() {
   const modelSel = document.getElementById("sticky-model-select");
-  const modelName = modelSel.selectedOptions[0]?.dataset?.name || "";
+  const opt = modelSel.selectedOptions[0];
+  const modelName = opt?.dataset?.name || "";
   const deploymentId = document.getElementById("sticky-dep-select").value;
-  if (!modelName || !deploymentId) { toast("Select model and deployment"); return; }
+  if (!modelName || !deploymentId) { toast("Select target and deployment"); return; }
   const rawMin = parseInt(document.getElementById("sticky-ttl-input").value, 10);
   const minutes = (!isNaN(rawMin) && rawMin > 0) ? rawMin : 120;
   const ttlMs = minutes * 60 * 1000;
@@ -1816,7 +1836,7 @@ loadDashboard(); loadLastRequest(); loadStickyRoutes(); loadStickySelects(); loa
 setInterval(() => {
   if (!autoRefresh) return;
   const p = document.querySelector('.page.active')?.id;
-  if (p==='page-dashboard') { loadDashboard(); loadLastRequest(); loadStickyRoutes(); loadStickySelects(); }
+  if (p==='page-dashboard') { loadDashboard(); loadLastRequest(); loadStickyRoutes(); }
   else if (p==='page-logs') loadLogs();
 }, 5000);
 </script>
