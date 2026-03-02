@@ -628,7 +628,8 @@ body {
 <!-- MODEL MODAL -->
 <div class="modal-overlay" id="model-modal">
   <div class="modal">
-    <div class="modal-title">Add Model</div>
+    <div class="modal-title" id="model-modal-title">Add Model</div>
+    <input type="hidden" id="model-edit-id">
     <div class="form-group"><label>Model Name (the name clients will use)</label><input type="text" id="model-name" placeholder="e.g. claude-opus, gpt-4o"></div>
     <div class="modal-actions"><button class="btn" onclick="closeModal('model-modal')">Cancel</button><button class="btn btn-primary" onclick="saveModel()">Save</button></div>
   </div>
@@ -769,12 +770,23 @@ async function loadProviders() {
 }
 
 // ============ MODELS ============
-function openModelModal() { document.getElementById('model-name').value=''; document.getElementById('model-modal').classList.add('open'); }
+function openModelModal(model) {
+  document.getElementById('model-edit-id').value = model?.id || '';
+  document.getElementById('model-name').value = model?.name || '';
+  document.getElementById('model-modal-title').textContent = model ? 'Edit Model' : 'Add Model';
+  document.getElementById('model-modal').classList.add('open');
+}
 async function saveModel() {
+  const id = document.getElementById('model-edit-id').value;
   const name = document.getElementById('model-name').value;
   if (!name) { toast('Name required','error'); return; }
-  await fetch(API+'/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
-  closeModal('model-modal'); toast('Model added'); loadModels();
+  if (id) {
+    await fetch(API+'/models/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    closeModal('model-modal'); toast('Model updated'); loadModels(); loadChains(); loadDashboard();
+  } else {
+    await fetch(API+'/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    closeModal('model-modal'); toast('Model added'); loadModels();
+  }
 }
 async function deleteModel(id,name) { if(!confirm('Delete "'+name+'"?'))return; await fetch(API+'/models/'+id,{method:'DELETE'}); toast('Deleted'); loadModels(); loadChains(); loadDashboard(); }
 
@@ -810,7 +822,8 @@ async function loadModels() {
       const sb = !d.enabled ? '<span class="card-badge badge-offline">disabled</span>' : isCd ? '<span class="card-badge badge-cooldown">cooldown</span>' : '<span class="card-badge badge-healthy">healthy</span>';
       return `<div class="dep-item"><span class="dep-order">#${d.order}</span><span class="dep-model">${esc(d.modelName)}</span><span class="dep-provider">${esc(d.providerName)}</span>${sb}<button class="btn btn-sm btn-icon" onclick="toggleDeployment('${d.id}',${d.enabled})" title="${d.enabled?'Disable':'Enable'}">${d.enabled?'⏸':'▶'}</button><button class="btn btn-sm btn-icon btn-danger" onclick="deleteDeployment('${d.id}')" title="Remove">✕</button></div>`;
     }).join('');
-    return `<div class="card"><div class="card-header"><div class="card-title">${esc(m.name)}</div><button class="btn btn-sm btn-danger" onclick="deleteModel('${m.id}','${esc(m.name)}')">Delete</button></div><div>${deps||'<div style="color:var(--text-dim);font-size:11px;padding:8px">No deployments</div>'}</div><div class="card-actions"><button class="btn btn-sm btn-primary" onclick="openDeployModal('${m.id}')">+ Add Deployment</button></div></div>`;
+    return `<div class="card"><div class="card-header"><div class="card-title">${esc(m.name)}</div><button class="btn btn-sm" onclick="openModelModal({id:'${m.id}',name:'${esc(m.name).replace(/'/g,"\\'")}'})">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteModel('${m.id}','${esc(m.name)}')">Delete</button></div><div>${deps||'<div style="color:var(--text-dim);font-size:11px;padding:8px">No deployments</div>'}</div><div class="card-actions"><button class="btn btn-sm btn-primary" onclick="openDeployModal('${m.id}')">+ Add Deployment</button></div></div>`;
   }).join('');
 }
 

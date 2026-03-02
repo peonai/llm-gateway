@@ -92,6 +92,13 @@ api.post("/models", async (c) => {
   const m = db.createModel(body.name);
   return c.json(m, 201);
 });
+api.put("/models/:id", async (c) => {
+  const { name } = await c.req.json();
+  if (!name) return c.json({ error: "name required" }, 400);
+  db.updateModel(c.req.param("id"), name);
+  return c.json({ ok: true });
+});
+
 api.delete("/models/:id", (c) => {
   db.deleteModel(c.req.param("id"));
   return c.json({ ok: true });

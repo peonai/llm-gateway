@@ -131,6 +131,10 @@ export function createModel(name: string) {
   return getModel(id);
 }
 
+export function updateModel(id: string, name: string) {
+  getDb().query("UPDATE models SET name = ? WHERE id = ?").run(name, id);
+}
+
 export function deleteModel(id: string) {
   getDb().query("DELETE FROM models WHERE id = ?").run(id);
 }
