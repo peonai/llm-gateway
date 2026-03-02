@@ -135,3 +135,36 @@ api.get("/logs", (c) => {
 });
 
 export default api;
+
+// --- API Keys ---
+api.get("/keys", (c) => {
+  const keys = db.listApiKeys();
+  return c.json(keys);
+});
+
+api.post("/keys", async (c) => {
+  const body = await c.req.json();
+  const key = db.createApiKey({ name: body.name, rateLimit: body.rateLimit, allowedModels: body.allowedModels });
+  return c.json(key, 201);
+});
+
+api.put("/keys/:id", async (c) => {
+  const body = await c.req.json();
+  const key = db.updateApiKey(c.req.param("id"), body);
+  return key ? c.json(key) : c.json({ error: "not found" }, 404);
+});
+
+api.delete("/keys/:id", (c) => {
+  db.deleteApiKey(c.req.param("id"));
+  return c.json({ ok: true });
+});
+
+// --- Model Stats for Dashboard ---
+api.get("/model-stats", (c) => {
+  return c.json(db.getModelStats());
+});
+
+api.get("/model-timeline", (c) => {
+  const hours = parseInt(c.req.query("hours") || "24");
+  return c.json(db.getModelTimeline(hours));
+});

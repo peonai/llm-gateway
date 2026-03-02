@@ -3,14 +3,61 @@ import { cors } from "hono/cors";
 import { serveStatic } from "hono/bun";
 import api from "./api";
 import { routeRequest } from "./router";
+import { getApiKeyByKey, incrementApiKeyUsage, listApiKeys } from "./db";
 
 const app = new Hono();
 
 // CORS
 app.use("*", cors());
 
-// Management API
+// Management API (no auth for local UI)
 app.route("/api", api);
+
+// --- API Key auth middleware for proxy endpoints ---
+app.use("/v1/*", async (c, next) => {
+  // If no API keys exist, allow all (open mode)
+  const keys = listApiKeys() as any[];
+  if (keys.length === 0) {
+    return next();
+  }
+
+  // Extract key from Authorization header or x-api-key
+  let apiKey = "";
+  const authHeader = c.req.header("Authorization") || "";
+  if (authHeader.startsWith("Bearer gw-")) {
+    apiKey = authHeader.replace("Bearer ", "");
+  }
+  const xApiKey = c.req.header("x-api-key") || "";
+  if (xApiKey.startsWith("gw-")) {
+    apiKey = xApiKey;
+  }
+
+  if (!apiKey) {
+    return next(); // No gw- key, pass through (might be using provider key directly)
+  }
+
+  const keyRecord: any = getApiKeyByKey(apiKey);
+  if (!keyRecord) {
+    return c.json({ error: { message: "Invalid API key", type: "authentication_error" } }, 401);
+  }
+  if (!keyRecord.enabled) {
+    return c.json({ error: { message: "API key disabled", type: "authentication_error" } }, 403);
+  }
+
+  // Check allowed models
+  if (keyRecord.allowedModels) {
+    const body = await c.req.json();
+    const allowed = keyRecord.allowedModels.split(",").map((s: string) => s.trim()).filter(Boolean);
+    if (allowed.length > 0 && body.model && !allowed.includes(body.model)) {
+      return c.json({ error: { message: `Model "${body.model}" not allowed for this key`, type: "permission_error" } }, 403);
+    }
+  }
+
+  // Track usage
+  incrementApiKeyUsage(apiKey);
+
+  return next();
+});
 
 // --- Proxy endpoints ---
 
@@ -36,7 +83,7 @@ app.post("/v1/messages", async (c) => {
   return routeRequest(modelName, "/v1/messages", "POST", c.req.raw.headers, body, isStreaming);
 });
 
-// OpenAI models list (return configured models)
+// OpenAI models list
 app.get("/v1/models", (c) => {
   const { listModels } = require("./db");
   const models = listModels().map((m: any) => ({

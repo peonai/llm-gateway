@@ -54,6 +54,18 @@ function initSchema() {
       createdAt INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
     );
 
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      key TEXT NOT NULL UNIQUE,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      rateLimit INTEGER DEFAULT 0,
+      allowedModels TEXT DEFAULT '',
+      totalRequests INTEGER DEFAULT 0,
+      createdAt INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+      lastUsedAt INTEGER
+    );
+
     CREATE TABLE IF NOT EXISTS deployment_stats (
       deploymentId TEXT PRIMARY KEY,
       totalRequests INTEGER DEFAULT 0,
@@ -212,4 +224,85 @@ export function getLogSummary() {
     avgLatencyMs: Math.round(avgLatency?.avg ?? 0),
     lastHourRequests: recent?.count ?? 0,
   };
+}
+
+// --- API Keys ---
+export function generateKey(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = 'gw-';
+  for (let i = 0; i < 32; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+  return result;
+}
+
+export function listApiKeys() {
+  return getDb().query("SELECT * FROM api_keys ORDER BY createdAt DESC").all();
+}
+
+export function getApiKey(id: string) {
+  return getDb().query("SELECT * FROM api_keys WHERE id = ?").get(id);
+}
+
+export function getApiKeyByKey(key: string) {
+  return getDb().query("SELECT * FROM api_keys WHERE key = ?").get(key);
+}
+
+export function createApiKey(p: { name: string; rateLimit?: number; allowedModels?: string }) {
+  const id = uuid();
+  const key = generateKey();
+  getDb().query("INSERT INTO api_keys (id, name, key, rateLimit, allowedModels) VALUES (?, ?, ?, ?, ?)").run(
+    id, p.name, key, p.rateLimit ?? 0, p.allowedModels ?? ''
+  );
+  return getApiKey(id);
+}
+
+export function updateApiKey(id: string, p: { name?: string; enabled?: number; rateLimit?: number; allowedModels?: string }) {
+  const existing: any = getApiKey(id);
+  if (!existing) return null;
+  getDb().query("UPDATE api_keys SET name=?, enabled=?, rateLimit=?, allowedModels=? WHERE id=?").run(
+    p.name ?? existing.name, p.enabled !== undefined ? p.enabled : existing.enabled,
+    p.rateLimit ?? existing.rateLimit, p.allowedModels ?? existing.allowedModels, id
+  );
+  return getApiKey(id);
+}
+
+export function deleteApiKey(id: string) {
+  getDb().query("DELETE FROM api_keys WHERE id = ?").run(id);
+}
+
+export function incrementApiKeyUsage(key: string) {
+  getDb().query("UPDATE api_keys SET totalRequests = totalRequests + 1, lastUsedAt = ? WHERE key = ?").run(Date.now(), key);
+}
+
+// --- Per-model stats for dashboard ---
+export function getModelStats() {
+  return getDb().query(`
+    SELECT 
+      rl.model,
+      COUNT(*) as totalRequests,
+      SUM(CASE WHEN rl.status >= 200 AND rl.status < 300 THEN 1 ELSE 0 END) as successCount,
+      SUM(CASE WHEN rl.status >= 400 THEN 1 ELSE 0 END) as failCount,
+      ROUND(AVG(CASE WHEN rl.status >= 200 AND rl.status < 300 THEN rl.latencyMs END)) as avgLatencyMs,
+      SUM(rl.tokensIn) as totalTokensIn,
+      SUM(rl.tokensOut) as totalTokensOut
+    FROM request_logs rl
+    WHERE rl.model IS NOT NULL
+    GROUP BY rl.model
+    ORDER BY totalRequests DESC
+  `).all();
+}
+
+export function getModelTimeline(hours: number = 24) {
+  const since = Date.now() - hours * 3600000;
+  return getDb().query(`
+    SELECT 
+      model,
+      CAST((createdAt / 3600000) AS INTEGER) * 3600000 as hour,
+      COUNT(*) as count,
+      SUM(CASE WHEN status >= 200 AND status < 300 THEN 1 ELSE 0 END) as success,
+      SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) as fail
+    FROM request_logs
+    WHERE createdAt > ? AND model IS NOT NULL
+    GROUP BY model, hour
+    ORDER BY hour
+  `).all(since);
 }
