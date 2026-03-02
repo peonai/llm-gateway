@@ -1,16 +1,27 @@
 {
   "name": "llm-gateway",
-  "module": "index.ts",
   "version": "1.0.0",
+  "description": "Lightweight LLM API gateway with multi-provider routing, fallback chains, sticky routing, and a built-in management UI.",
+  "module": "src/index.ts",
+  "main": "src/index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "dev:node": "tsx src/index.ts",
+    "start": "bun run src/index.ts",
+    "start:node": "tsx src/index.ts"
+  },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "tsx": "^4"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
-    "hono": "^4.12.3"
+    "hono": "^4.12.3",
+    "@hono/node-server": "^1.13.0",
+    "better-sqlite3": "^11.0.0"
   }
 }

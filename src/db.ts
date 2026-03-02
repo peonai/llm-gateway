@@ -1,11 +1,33 @@
-import { Database } from "bun:sqlite";
 import { randomUUID } from "crypto";
 
-let db: Database;
+const isBun = typeof globalThis.Bun !== "undefined";
 
-export function getDb(): Database {
+interface DbLike {
+  exec(sql: string): void;
+  query(sql: string): { all(...p: any[]): any[]; get(...p: any[]): any; run(...p: any[]): any };
+}
+
+let db: DbLike;
+
+function wrapBetterSqlite3(raw: any): DbLike {
+  return {
+    exec: (sql: string) => raw.exec(sql),
+    query: (sql: string) => {
+      const stmt = raw.prepare(sql);
+      return { all: (...p: any[]) => stmt.all(...p), get: (...p: any[]) => stmt.get(...p), run: (...p: any[]) => stmt.run(...p) };
+    },
+  };
+}
+
+export function getDb(): DbLike {
   if (!db) {
-    db = new Database("gateway.db", { create: true });
+    if (isBun) {
+      const { Database } = require("bun:sqlite");
+      db = new Database("gateway.db", { create: true });
+    } else {
+      const BetterSqlite3 = require("better-sqlite3");
+      db = wrapBetterSqlite3(new BetterSqlite3("gateway.db"));
+    }
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA foreign_keys = ON");
     // Migrations

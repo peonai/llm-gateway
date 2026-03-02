@@ -1,9 +1,17 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { serveStatic } from "hono/bun";
 import api from "./api";
 import { routeRequest } from "./router";
 import { getApiKeyByKey, incrementApiKeyUsage, listApiKeys } from "./db";
+
+const isBun = typeof globalThis.Bun !== "undefined";
+
+let serveStatic: any;
+if (isBun) {
+  serveStatic = require("hono/bun").serveStatic;
+} else {
+  serveStatic = require("@hono/node-server/serve-static").serveStatic;
+}
 
 const app = new Hono();
 

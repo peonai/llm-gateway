@@ -150,9 +150,10 @@ api.get("/logs", (c) => {
 
 // Sticky routes
 api.post("/sticky", async (c) => {
-  const { modelName, deploymentId } = await c.req.json();
+  const { modelName, deploymentId, ttlMs } = await c.req.json();
   if (!modelName || !deploymentId) return c.json({ error: "modelName and deploymentId required" }, 400);
-  setStickyDeployment(modelName, deploymentId);
+  const safeTtl = typeof ttlMs === "number" && ttlMs > 0 ? ttlMs : undefined;
+  setStickyDeployment(modelName, deploymentId, safeTtl);
   return c.json({ ok: true });
 });
 api.delete("/sticky/:model", (c) => {

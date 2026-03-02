@@ -512,6 +512,7 @@ body {
     <div class="nav-tab" data-page="chains">Chains</div>
     <div class="nav-tab" data-page="keys">API Keys</div>
     <div class="nav-tab" data-page="logs">Logs</div>
+    <div class="nav-tab" data-page="about">About</div>
   </div>
   <div class="nav-right">
     <div class="status-dot"></div>
@@ -524,12 +525,16 @@ body {
 <div class="main">
   <!-- DASHBOARD -->
   <div class="page active" id="page-dashboard">
-    <div id="sticky-routes-bar" style="margin-bottom:8px"></div>
-    <div id="sticky-manual" style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
-      <span style="font-size:10px;color:var(--text-dim)">Pin:</span>
-      <select id="sticky-model-select" style="flex:1;max-width:200px;padding:4px 8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:var(--font)"></select>
-      <select id="sticky-dep-select" style="flex:1;max-width:280px;padding:4px 8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:var(--font)"></select>
-      <button onclick="manualSticky()" style="padding:4px 10px;background:var(--green);border:none;border-radius:4px;color:var(--bg);cursor:pointer;font-size:10px;font-weight:600">Pin 2h</button>
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+      <div id="sticky-routes-bar" style="flex:1;min-width:0"></div>
+      <div id="sticky-manual" style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+        <span style="font-size:10px;color:var(--text-dim)">Pin:</span>
+        <select id="sticky-model-select" style="padding:4px 8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:var(--font);max-width:160px"></select>
+        <select id="sticky-dep-select" style="padding:4px 8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:var(--font);max-width:220px"></select>
+        <input id="sticky-ttl-input" type="number" min="1" max="1440" value="120" title="Duration in minutes" style="width:52px;padding:4px 6px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:var(--font);text-align:center" />
+        <span style="font-size:10px;color:var(--text-dim)">min</span>
+        <button onclick="manualSticky()" style="padding:4px 10px;background:var(--green);border:none;border-radius:4px;color:var(--bg);cursor:pointer;font-size:10px;font-weight:600">⚡ Pin</button>
+      </div>
     </div>
     <div id="last-request-card" style="margin-bottom:12px"></div>
     <div class="stats-grid">
@@ -647,6 +652,89 @@ body {
   </div>
 
   <!-- LOGS -->
+  <div class="page" id="page-about">
+    <div style="max-width:680px;margin:0 auto;padding:32px 16px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+        <div style="font-size:24px;font-weight:700;color:var(--text)">LLM<span style="color:var(--text-dim)">/</span>Gateway</div>
+        <span style="font-size:11px;padding:2px 8px;background:rgba(0,255,136,0.1);border:1px solid rgba(0,255,136,0.25);border-radius:10px;color:var(--green)">v1.0.0</span>
+      </div>
+      <p style="color:var(--text-dim);font-size:13px;line-height:1.7;margin-bottom:28px">
+        A lightweight self-hosted LLM API gateway with multi-provider routing, automatic fallback, and a built-in management UI.
+      </p>
+
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:20px;margin-bottom:20px">
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:12px;text-transform:uppercase;letter-spacing:.06em">Why I Built This</div>
+        <p style="color:var(--text-dim);font-size:12px;line-height:1.8;margin:0">
+          Running multiple AI agents means juggling a dozen LLM providers — some cheap but flaky, others reliable but expensive.
+          OpenClaw's built-in failover only triggers on auth and rate-limit errors, which isn't enough when providers go silently
+          degraded or return garbage. I needed a single gateway that sits in front of everything: automatically retries on any
+          failure, sticks to the last working deployment for a while (sticky routing), and lets me manage providers, models, and
+          API keys through a UI instead of editing JSON by hand. This is that gateway.
+        </p>
+      </div>
+
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:20px;margin-bottom:20px">
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:14px;text-transform:uppercase;letter-spacing:.06em">Features</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div style="display:flex;gap:10px;padding:10px;background:var(--bg);border-radius:6px">
+            <span style="font-size:16px;line-height:1">⚡</span>
+            <div><div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:2px">Sticky routing</div><div style="font-size:10px;color:var(--text-dim);line-height:1.5">Prefer the last working deployment for a configurable duration</div></div>
+          </div>
+          <div style="display:flex;gap:10px;padding:10px;background:var(--bg);border-radius:6px">
+            <span style="font-size:16px;line-height:1">🔀</span>
+            <div><div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:2px">Fallback chains</div><div style="font-size:10px;color:var(--text-dim);line-height:1.5">Model-level and provider-level chains with visual builder</div></div>
+          </div>
+          <div style="display:flex;gap:10px;padding:10px;background:var(--bg);border-radius:6px">
+            <span style="font-size:16px;line-height:1">🔄</span>
+            <div><div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:2px">Protocol conversion</div><div style="font-size:10px;color:var(--text-dim);line-height:1.5">Transparent OpenAI ↔ Anthropic format translation</div></div>
+          </div>
+          <div style="display:flex;gap:10px;padding:10px;background:var(--bg);border-radius:6px">
+            <span style="font-size:16px;line-height:1">🔑</span>
+            <div><div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:2px">API key management</div><div style="font-size:10px;color:var(--text-dim);line-height:1.5">Per-key model restrictions and usage tracking</div></div>
+          </div>
+          <div style="display:flex;gap:10px;padding:10px;background:var(--bg);border-radius:6px">
+            <span style="font-size:16px;line-height:1">📊</span>
+            <div><div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:2px">Analytics</div><div style="font-size:10px;color:var(--text-dim);line-height:1.5">Request logs, success rates, latency stats per deployment</div></div>
+          </div>
+          <div style="display:flex;gap:10px;padding:10px;background:var(--bg);border-radius:6px">
+            <span style="font-size:16px;line-height:1">🎮</span>
+            <div><div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:2px">Playground</div><div style="font-size:10px;color:var(--text-dim);line-height:1.5">Test any model or chain directly from the UI</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:20px;margin-bottom:20px">
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:14px;text-transform:uppercase;letter-spacing:.06em">Quick Start</div>
+        <div style="margin-bottom:10px">
+          <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px">Bun (recommended)</div>
+          <code style="display:block;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 12px;font-size:11px;color:var(--cyan)">bun install &amp;&amp; bun run dev</code>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px">Node.js (v18+)</div>
+          <code style="display:block;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 12px;font-size:11px;color:var(--cyan)">npm install &amp;&amp; npm run dev:node</code>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px">
+        <a href="https://github.com/peonai/llm-gateway" target="_blank"
+           style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;color:var(--text);text-decoration:none;font-size:11px;font-weight:500;transition:border-color .15s"
+           onmouseover="this.style.borderColor='var(--green)'" onmouseout="this.style.borderColor='var(--border)'">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844a9.59 9.59 0 012.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.942.359.31.678.921.678 1.856 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12c0-5.523-4.477-10-10-10z"/></svg>
+          GitHub
+        </a>
+        <a href="https://github.com/peonai/llm-gateway/issues" target="_blank"
+           style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;color:var(--text);text-decoration:none;font-size:11px;font-weight:500;transition:border-color .15s"
+           onmouseover="this.style.borderColor='var(--amber)'" onmouseout="this.style.borderColor='var(--border)'">
+          🐛 Issues
+        </a>
+      </div>
+
+      <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border);font-size:10px;color:var(--text-dim)">
+        Built by <a href="https://github.com/peonai" target="_blank" style="color:var(--green);text-decoration:none">peonai</a> · MIT License
+      </div>
+    </div>
+  </div>
+
   <div class="page" id="page-logs">
     <div class="section-header">
       <div class="section-title">Request Logs</div>
@@ -1652,12 +1740,13 @@ async function loadStickyRoutes() {
   el.innerHTML = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
     <span style="font-size:10px;color:var(--text-dim);margin-right:2px">⚡ Sticky:</span>
     ${entries.map(([model, s]) => {
-      const mins = Math.round(s.remainingMs / 60000);
+      const untilTs = Date.now() + s.remainingMs;
+      const untilTime = new Date(untilTs).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
       return `<div style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px 3px 10px;background:rgba(0,255,136,0.08);border:1px solid rgba(0,255,136,0.2);border-radius:4px;font-size:10px">
         <span style="color:var(--text-dim)">${esc(model)}</span>
         <span style="color:var(--text-dim)">→</span>
         <span style="color:var(--cyan)">${esc(s.providerName||"?")}</span>
-        <span style="color:var(--text-dim);font-size:9px">${mins}min</span>
+        <span style="color:var(--text-dim);font-size:9px" title="${Math.round(s.remainingMs/60000)}min remaining">until ${untilTime}</span>
         <button onclick="clearSticky('${esc(model)}')" title="Clear sticky" style="margin-left:2px;background:none;border:none;color:var(--text-dim);cursor:pointer;padding:0 2px;font-size:11px;line-height:1" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--text-dim)'">×</button>
       </div>`;
     }).join("")}
@@ -1670,23 +1759,27 @@ async function loadStickyRoutes() {
 async function loadStickySelects() {
   const models = await fetch(API+"/models").then(r=>r.json());
   const ms = document.getElementById("sticky-model-select");
-  ms.innerHTML = '<option value="">Select model...</option>' + models.map(m => `<option value="${esc(m.name)}">${esc(m.name)}</option>`).join("");
+  ms.innerHTML = '<option value="">Select model...</option>' + models.map(m => `<option value="${esc(m.id)}" data-name="${esc(m.name)}">${esc(m.name)}</option>`).join("");
   ms.onchange = loadStickyDeps;
 }
 async function loadStickyDeps() {
-  const model = document.getElementById("sticky-model-select").value;
+  const modelId = document.getElementById("sticky-model-select").value;
   const ds = document.getElementById("sticky-dep-select");
-  if (!model) { ds.innerHTML = '<option value="">Select deployment...</option>'; return; }
+  if (!modelId) { ds.innerHTML = '<option value="">Select deployment...</option>'; return; }
   const deps = await fetch(API+"/deployments").then(r=>r.json());
-  const filtered = deps.filter(d => d.modelName === model || d.model === model);
+  const filtered = deps.filter(d => d.modelId === modelId);
   ds.innerHTML = '<option value="">Select deployment...</option>' + filtered.map(d => `<option value="${d.id}">${esc(d.providerName)} / ${esc(d.modelName)}</option>`).join("");
 }
 async function manualSticky() {
-  const modelName = document.getElementById("sticky-model-select").value;
+  const modelSel = document.getElementById("sticky-model-select");
+  const modelName = modelSel.selectedOptions[0]?.dataset?.name || "";
   const deploymentId = document.getElementById("sticky-dep-select").value;
   if (!modelName || !deploymentId) { toast("Select model and deployment"); return; }
-  await fetch(API+"/sticky", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({modelName, deploymentId}) });
-  toast("Pinned for 2h");
+  const rawMin = parseInt(document.getElementById("sticky-ttl-input").value, 10);
+  const minutes = (!isNaN(rawMin) && rawMin > 0) ? rawMin : 120;
+  const ttlMs = minutes * 60 * 1000;
+  await fetch(API+"/sticky", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({modelName, deploymentId, ttlMs}) });
+  toast(`Pinned for ${minutes}min`);
   loadStickyRoutes();
 }
 
