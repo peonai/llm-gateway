@@ -1,0 +1,137 @@
+import { Hono } from "hono";
+import * as db from "./db";
+import { getCooldownInfo } from "./router";
+
+const api = new Hono();
+
+// --- Providers ---
+api.get("/providers", (c) => c.json(db.listProviders()));
+api.get("/providers/:id", (c) => {
+  const p = db.getProvider(c.req.param("id"));
+  return p ? c.json(p) : c.json({ error: "not found" }, 404);
+});
+api.post("/providers", async (c) => {
+  const body = await c.req.json();
+  const p = db.createProvider({ name: body.name, baseUrl: body.baseUrl, apiKey: body.apiKey || "", apiType: body.apiType || "openai" });
+  return c.json(p, 201);
+});
+api.put("/providers/:id", async (c) => {
+  const body = await c.req.json();
+  const p = db.updateProvider(c.req.param("id"), body);
+  return p ? c.json(p) : c.json({ error: "not found" }, 404);
+});
+api.delete("/providers/:id", (c) => {
+  db.deleteProvider(c.req.param("id"));
+  return c.json({ ok: true });
+});
+
+// Test provider connection
+api.post("/providers/:id/test", async (c) => {
+  const p: any = db.getProvider(c.req.param("id"));
+  if (!p) return c.json({ error: "not found" }, 404);
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    let url = `${p.baseUrl.replace(/\/$/, "")}/v1/models`;
+    if (p.apiType === "anthropic") {
+      headers["x-api-key"] = p.apiKey;
+      headers["anthropic-version"] = "2023-06-01";
+      // Anthropic doesn't have /models endpoint, just test with a minimal message
+      url = `${p.baseUrl.replace(/\/$/, "")}/v1/messages`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
+        signal: AbortSignal.timeout(10000),
+      });
+      return c.json({ ok: resp.ok, status: resp.status, message: resp.ok ? "Connection successful" : await resp.text().then(t => t.slice(0, 200)) });
+    } else {
+      headers["Authorization"] = `Bearer ${p.apiKey}`;
+      const resp = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+      return c.json({ ok: resp.ok, status: resp.status, message: resp.ok ? "Connection successful" : await resp.text().then(t => t.slice(0, 200)) });
+    }
+  } catch (err: any) {
+    return c.json({ ok: false, status: 0, message: err.message });
+  }
+});
+
+// Fetch remote models
+api.post("/providers/:id/fetch-models", async (c) => {
+  const p: any = db.getProvider(c.req.param("id"));
+  if (!p) return c.json({ error: "not found" }, 404);
+  try {
+    const url = `${p.baseUrl.replace(/\/$/, "")}/v1/models`;
+    const headers: Record<string, string> = {};
+    if (p.apiType === "anthropic") {
+      headers["x-api-key"] = p.apiKey;
+      headers["anthropic-version"] = "2023-06-01";
+    } else {
+      headers["Authorization"] = `Bearer ${p.apiKey}`;
+    }
+    const resp = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+    if (!resp.ok) return c.json({ error: `HTTP ${resp.status}`, models: [] });
+    const data: any = await resp.json();
+    const models = (data.data || data.models || []).map((m: any) => m.id || m.name);
+    return c.json({ models });
+  } catch (err: any) {
+    return c.json({ error: err.message, models: [] });
+  }
+});
+
+// --- Models ---
+api.get("/models", (c) => {
+  const models = db.listModels() as any[];
+  // Enrich with deployment info
+  const enriched = models.map(m => ({
+    ...m,
+    deployments: db.listDeployments(m.id),
+  }));
+  return c.json(enriched);
+});
+api.post("/models", async (c) => {
+  const body = await c.req.json();
+  const m = db.createModel(body.name);
+  return c.json(m, 201);
+});
+api.delete("/models/:id", (c) => {
+  db.deleteModel(c.req.param("id"));
+  return c.json({ ok: true });
+});
+
+// --- Deployments ---
+api.get("/deployments", (c) => c.json(db.listDeployments()));
+api.post("/deployments", async (c) => {
+  const body = await c.req.json();
+  const d = db.createDeployment(body);
+  return c.json(d, 201);
+});
+api.put("/deployments/:id", async (c) => {
+  const body = await c.req.json();
+  const d = db.updateDeployment(c.req.param("id"), body);
+  return d ? c.json(d) : c.json({ error: "not found" }, 404);
+});
+api.delete("/deployments/:id", (c) => {
+  db.deleteDeployment(c.req.param("id"));
+  return c.json({ ok: true });
+});
+
+// --- Stats ---
+api.get("/stats", (c) => {
+  const summary = db.getLogSummary();
+  const allStats = db.getAllStats();
+  const cooldownInfo = getCooldownInfo();
+  const providerCount = (db.listProviders() as any[]).length;
+  const modelCount = (db.listModels() as any[]).length;
+  return c.json({ summary: { ...summary, providerCount, modelCount }, deploymentStats: allStats, cooldowns: cooldownInfo });
+});
+
+// --- Logs ---
+api.get("/logs", (c) => {
+  const limit = parseInt(c.req.query("limit") || "100");
+  const offset = parseInt(c.req.query("offset") || "0");
+  const model = c.req.query("model") || undefined;
+  const status = c.req.query("status") || undefined;
+  const provider = c.req.query("provider") || undefined;
+  return c.json(db.listLogs(limit, offset, { model, status, provider }));
+});
+
+export default api;

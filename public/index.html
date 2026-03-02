@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Gateway</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a0f;
+  --bg-card: #12121a;
+  --bg-card-hover: #1a1a28;
+  --bg-input: #0e0e16;
+  --border: #1e1e2e;
+  --border-hover: #2a2a3e;
+  --text: #e0e0e0;
+  --text-dim: #666;
+  --text-muted: #444;
+  --green: #00ff88;
+  --green-dim: #00cc6a;
+  --amber: #ffaa00;
+  --amber-dim: #cc8800;
+  --red: #ff3355;
+  --red-dim: #cc2244;
+  --blue: #4488ff;
+  --radius: 8px;
+  --font: 'JetBrains Mono', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 100vh;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* --- NAV --- */
+.nav {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  height: 52px;
+  backdrop-filter: blur(20px);
+  background: rgba(10,10,15,0.85);
+  position: sticky; top: 0; z-index: 100;
+}
+
+.nav-logo {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.5px;
+  margin-right: 32px;
+  color: var(--green);
+  text-shadow: 0 0 20px rgba(0,255,136,0.3);
+}
+
+.nav-logo span { color: var(--text-dim); font-weight: 400; }
+
+.nav-tabs { display: flex; gap: 4px; }
+
+.nav-tab {
+  padding: 14px 16px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+.nav-tab:hover { color: var(--text); }
+.nav-tab.active { color: var(--green); border-bottom-color: var(--green); }
+
+.nav-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* --- MAIN --- */
+.main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+.page { display: none; }
+.page.active { display: block; }
+
+/* --- CARDS --- */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  transition: all 0.2s;
+}
+
+.stat-card:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 0 20px rgba(0,255,136,0.05);
+}
+
+.stat-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -1px;
+}
+
+.stat-value.green { color: var(--green); text-shadow: 0 0 15px rgba(0,255,136,0.2); }
+.stat-value.amber { color: var(--amber); }
+.stat-value.blue { color: var(--blue); }
+
+/* --- GRID --- */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  transition: all 0.2s;
+}
+
+.card:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-card-hover);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.card-title { font-weight: 600; font-size: 14px; }
+
+.card-meta { color: var(--text-dim); font-size: 11px; margin-top: 4px; }
+
+.card-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge-openai { background: rgba(68,136,255,0.15); color: var(--blue); }
+.badge-anthropic { background: rgba(255,170,0,0.15); color: var(--amber); }
+.badge-healthy { background: rgba(0,255,136,0.15); color: var(--green); }
+.badge-cooldown { background: rgba(255,170,0,0.15); color: var(--amber); }
+.badge-offline { background: rgba(255,51,85,0.15); color: var(--red); }
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* --- BUTTONS --- */
+.btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-weight: 500;
+}
+
+.btn:hover { background: var(--bg-card-hover); border-color: var(--text-dim); }
+.btn-primary { border-color: var(--green); color: var(--green); }
+.btn-primary:hover { background: rgba(0,255,136,0.1); }
+.btn-danger { border-color: var(--red); color: var(--red); }
+.btn-danger:hover { background: rgba(255,51,85,0.1); }
+.btn-sm { padding: 3px 10px; font-size: 10px; }
+.btn-icon { padding: 4px 8px; }
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+
+/* --- TABLE --- */
+.log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.log-table th {
+  text-align: left;
+  padding: 10px 12px;
+  color: var(--text-dim);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.log-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(30,30,46,0.5);
+}
+
+.log-table tr:hover td { background: rgba(30,30,46,0.5); }
+
+.status-ok { color: var(--green); }
+.status-err { color: var(--red); }
+.status-warn { color: var(--amber); }
+
+/* --- MODAL --- */
+.modal-overlay {
+  display: none;
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(4px);
+  z-index: 200;
+  justify-content: center;
+  align-items: center;
+}
+
+.modal-overlay.open { display: flex; }
+
+.modal {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 480px;
+  max-width: 90vw;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 20px;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.form-group input, .form-group select {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus, .form-group select:focus {
+  border-color: var(--green);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* --- DEPLOYMENT LIST --- */
+.dep-list { margin-top: 12px; }
+
+.dep-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+
+.dep-order {
+  color: var(--text-dim);
+  font-weight: 600;
+  min-width: 20px;
+}
+
+.dep-model { flex: 1; color: var(--green); }
+.dep-provider { color: var(--text-dim); }
+.dep-status { margin-left: auto; }
+
+/* --- TOAST --- */
+.toast-container {
+  position: fixed;
+  top: 60px;
+  right: 24px;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast {
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  animation: slideIn 0.3s ease, fadeOut 0.3s ease 2.7s forwards;
+  border: 1px solid;
+}
+
+.toast-success { background: rgba(0,255,136,0.1); border-color: var(--green); color: var(--green); }
+.toast-error { background: rgba(255,51,85,0.1); border-color: var(--red); color: var(--red); }
+
+@keyframes slideIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes fadeOut { to { opacity: 0; transform: translateY(-10px); } }
+
+/* --- LOGS FILTER --- */
+.filter-bar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  align-items: center;
+}
+
+.filter-bar input, .filter-bar select {
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 11px;
+  outline: none;
+}
+
+.auto-refresh-toggle {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.toggle-switch {
+  width: 32px; height: 18px;
+  background: var(--border);
+  border-radius: 9px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.toggle-switch.on { background: var(--green); }
+
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: white;
+  top: 2px; left: 2px;
+  transition: transform 0.2s;
+}
+
+.toggle-switch.on::after { transform: translateX(14px); }
+
+/* --- RECENT LOG TICKER --- */
+.ticker {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 11px;
+}
+
+.ticker-item {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(30,30,46,0.4);
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.ticker-time { color: var(--text-dim); min-width: 70px; }
+.ticker-model { color: var(--blue); min-width: 120px; }
+.ticker-provider { color: var(--text-dim); min-width: 100px; }
+.ticker-latency { min-width: 60px; text-align: right; }
+
+/* --- SCROLLBAR --- */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-logo">LLM<span>/</span>Gateway</div>
+  <div class="nav-tabs">
+    <div class="nav-tab active" data-page="dashboard">Dashboard</div>
+    <div class="nav-tab" data-page="providers">Providers</div>
+    <div class="nav-tab" data-page="models">Models</div>
+    <div class="nav-tab" data-page="logs">Logs</div>
+  </div>
+  <div class="nav-right">
+    <div class="status-dot"></div>
+    <span style="color:var(--text-dim);font-size:11px">v0.1.0</span>
+  </div>
+</nav>
+
+<div class="toast-container" id="toasts"></div>
+
+<div class="main">
+  <!-- DASHBOARD -->
+  <div class="page active" id="page-dashboard">
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Total Requests</div>
+        <div class="stat-value blue" id="stat-total">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Success Rate</div>
+        <div class="stat-value green" id="stat-rate">0%</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg Latency</div>
+        <div class="stat-value amber" id="stat-latency">0ms</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Providers</div>
+        <div class="stat-value" id="stat-providers">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Models</div>
+        <div class="stat-value" id="stat-models">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Last Hour</div>
+        <div class="stat-value green" id="stat-hour">0</div>
+      </div>
+    </div>
+
+    <div class="section-title" style="margin-bottom:12px">Recent Requests</div>
+    <div class="ticker" id="ticker">
+      <div style="color:var(--text-dim);text-align:center;padding:20px">No requests yet</div>
+    </div>
+  </div>
+
+  <!-- PROVIDERS -->
+  <div class="page" id="page-providers">
+    <div class="section-header">
+      <div class="section-title">Providers</div>
+      <button class="btn btn-primary" onclick="openProviderModal()">+ Add Provider</button>
+    </div>
+    <div class="card-grid" id="provider-grid"></div>
+  </div>
+
+  <!-- MODELS -->
+  <div class="page" id="page-models">
+    <div class="section-header">
+      <div class="section-title">Models & Routing</div>
+      <button class="btn btn-primary" onclick="openModelModal()">+ Add Model</button>
+    </div>
+    <div class="card-grid" id="model-grid"></div>
+  </div>
+
+  <!-- LOGS -->
+  <div class="page" id="page-logs">
+    <div class="section-header">
+      <div class="section-title">Request Logs</div>
+      <div class="auto-refresh-toggle">
+        Auto-refresh
+        <div class="toggle-switch on" id="auto-refresh" onclick="toggleAutoRefresh()"></div>
+      </div>
+    </div>
+    <div class="filter-bar">
+      <input type="text" placeholder="Model..." id="filter-model" oninput="loadLogs()">
+      <select id="filter-status" onchange="loadLogs()">
+        <option value="">All Status</option>
+        <option value="200">200 OK</option>
+        <option value="400">400 Bad Request</option>
+        <option value="401">401 Unauthorized</option>
+        <option value="429">429 Rate Limited</option>
+        <option value="500">500 Server Error</option>
+        <option value="502">502 Bad Gateway</option>
+      </select>
+      <input type="text" placeholder="Provider..." id="filter-provider" oninput="loadLogs()">
+    </div>
+    <div style="overflow-x:auto">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Model</th>
+            <th>Provider</th>
+            <th>Status</th>
+            <th>Latency</th>
+            <th>Tokens</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody id="log-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- PROVIDER MODAL -->
+<div class="modal-overlay" id="provider-modal">
+  <div class="modal">
+    <div class="modal-title" id="provider-modal-title">Add Provider</div>
+    <input type="hidden" id="provider-edit-id">
+    <div class="form-group">
+      <label>Name</label>
+      <input type="text" id="provider-name" placeholder="e.g. OpenAI, Anthropic AWS">
+    </div>
+    <div class="form-group">
+      <label>Base URL</label>
+      <input type="text" id="provider-url" placeholder="https://api.openai.com">
+    </div>
+    <div class="form-group">
+      <label>API Key</label>
+      <input type="password" id="provider-key" placeholder="sk-...">
+    </div>
+    <div class="form-group">
+      <label>API Type</label>
+      <select id="provider-type">
+        <option value="openai">OpenAI Compatible</option>
+        <option value="anthropic">Anthropic Messages</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('provider-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveProvider()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODEL MODAL -->
+<div class="modal-overlay" id="model-modal">
+  <div class="modal">
+    <div class="modal-title">Add Model</div>
+    <div class="form-group">
+      <label>Model Name (the name clients will use)</label>
+      <input type="text" id="model-name" placeholder="e.g. claude-opus, gpt-4o">
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('model-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveModel()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- DEPLOYMENT MODAL -->
+<div class="modal-overlay" id="deploy-modal">
+  <div class="modal">
+    <div class="modal-title">Add Deployment</div>
+    <input type="hidden" id="deploy-model-id">
+    <div class="form-group">
+      <label>Provider</label>
+      <select id="deploy-provider"></select>
+    </div>
+    <div class="form-group">
+      <label>Actual Model Name (at provider)</label>
+      <input type="text" id="deploy-model-name" placeholder="e.g. claude-opus-4-5, gpt-4o-2025-03-01">
+    </div>
+    <div class="form-group">
+      <label>Priority (lower = higher priority)</label>
+      <input type="number" id="deploy-order" value="1" min="1">
+    </div>
+    <div class="form-group">
+      <label>Timeout (seconds)</label>
+      <input type="number" id="deploy-timeout" value="60" min="5">
+    </div>
+    <div class="form-group">
+      <label>Max Retries</label>
+      <input type="number" id="deploy-retries" value="2" min="0">
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('deploy-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveDeployment()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '/api';
+let autoRefresh = true;
+let refreshTimer = null;
+
+// --- Navigation ---
+document.querySelectorAll('.nav-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('page-' + tab.dataset.page).classList.add('active');
+    if (tab.dataset.page === 'logs') loadLogs();
+  });
+});
+
+// --- Toast ---
+function toast(msg, type = 'success') {
+  const el = document.createElement('div');
+  el.className = 'toast toast-' + type;
+  el.textContent = msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+// --- Modals ---
+function openProviderModal(provider) {
+  document.getElementById('provider-edit-id').value = provider?.id || '';
+  document.getElementById('provider-name').value = provider?.name || '';
+  document.getElementById('provider-url').value = provider?.baseUrl || '';
+  document.getElementById('provider-key').value = provider?.apiKey || '';
+  document.getElementById('provider-type').value = provider?.apiType || 'openai';
+  document.getElementById('provider-modal-title').textContent = provider ? 'Edit Provider' : 'Add Provider';
+  document.getElementById('provider-modal').classList.add('open');
+}
+
+function openModelModal() {
+  document.getElementById('model-name').value = '';
+  document.getElementById('model-modal').classList.add('open');
+}
+
+function openDeployModal(modelId) {
+  document.getElementById('deploy-model-id').value = modelId;
+  document.getElementById('deploy-model-name').value = '';
+  document.getElementById('deploy-order').value = '1';
+  document.getElementById('deploy-timeout').value = '60';
+  document.getElementById('deploy-retries').value = '2';
+  // Populate provider select
+  fetch(API + '/providers').then(r => r.json()).then(providers => {
+    const sel = document.getElementById('deploy-provider');
+    sel.innerHTML = providers.map(p => `<option value="${p.id}">${p.name} (${p.apiType})</option>`).join('');
+  });
+  document.getElementById('deploy-modal').classList.add('open');
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+// Close modal on overlay click
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.classList.remove('open');
+  });
+});
+
+// --- API calls ---
+async function saveProvider() {
+  const id = document.getElementById('provider-edit-id').value;
+  const data = {
+    name: document.getElementById('provider-name').value,
+    baseUrl: document.getElementById('provider-url').value,
+    apiKey: document.getElementById('provider-key').value,
+    apiType: document.getElementById('provider-type').value,
+  };
+  if (!data.name || !data.baseUrl) { toast('Name and URL required', 'error'); return; }
+  const method = id ? 'PUT' : 'POST';
+  const url = id ? API + '/providers/' + id : API + '/providers';
+  await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  closeModal('provider-modal');
+  toast(id ? 'Provider updated' : 'Provider added');
+  loadProviders();
+}
+
+async function deleteProvider(id, name) {
+  if (!confirm(`Delete provider "${name}"?`)) return;
+  await fetch(API + '/providers/' + id, { method: 'DELETE' });
+  toast('Provider deleted');
+  loadProviders();
+}
+
+async function testProvider(id) {
+  const btn = event.target;
+  btn.textContent = 'Testing...';
+  try {
+    const resp = await fetch(API + '/providers/' + id + '/test', { method: 'POST' });
+    const data = await resp.json();
+    if (data.ok) {
+      toast('Connection OK (' + data.status + ')');
+    } else {
+      toast('Failed: ' + (data.message || 'Unknown error'), 'error');
+    }
+  } catch (err) {
+    toast('Error: ' + err.message, 'error');
+  }
+  btn.textContent = 'Test';
+}
+
+async function saveModel() {
+  const name = document.getElementById('model-name').value;
+  if (!name) { toast('Name required', 'error'); return; }
+  await fetch(API + '/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+  closeModal('model-modal');
+  toast('Model added');
+  loadModels();
+}
+
+async function deleteModel(id, name) {
+  if (!confirm(`Delete model "${name}" and all deployments?`)) return;
+  await fetch(API + '/models/' + id, { method: 'DELETE' });
+  toast('Model deleted');
+  loadModels();
+}
+
+async function saveDeployment() {
+  const data = {
+    modelId: document.getElementById('deploy-model-id').value,
+    providerId: document.getElementById('deploy-provider').value,
+    modelName: document.getElementById('deploy-model-name').value,
+    order: parseInt(document.getElementById('deploy-order').value),
+    timeout: parseInt(document.getElementById('deploy-timeout').value),
+    maxRetries: parseInt(document.getElementById('deploy-retries').value),
+  };
+  if (!data.modelName || !data.providerId) { toast('Provider and model name required', 'error'); return; }
+  await fetch(API + '/deployments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  closeModal('deploy-modal');
+  toast('Deployment added');
+  loadModels();
+}
+
+async function deleteDeployment(id) {
+  await fetch(API + '/deployments/' + id, { method: 'DELETE' });
+  toast('Deployment removed');
+  loadModels();
+}
+
+async function toggleDeployment(id, enabled) {
+  await fetch(API + '/deployments/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: enabled ? 0 : 1 }) });
+  loadModels();
+}
+
+// --- Loaders ---
+async function loadDashboard() {
+  try {
+    const resp = await fetch(API + '/stats');
+    const data = await resp.json();
+    const s = data.summary;
+    document.getElementById('stat-total').textContent = s.totalRequests.toLocaleString();
+    document.getElementById('stat-rate').textContent = s.successRate + '%';
+    document.getElementById('stat-latency').textContent = s.avgLatencyMs + 'ms';
+    document.getElementById('stat-providers').textContent = s.providerCount;
+    document.getElementById('stat-models').textContent = s.modelCount;
+    document.getElementById('stat-hour').textContent = s.lastHourRequests;
+
+    // Load recent logs for ticker
+    const logs = await fetch(API + '/logs?limit=20').then(r => r.json());
+    const ticker = document.getElementById('ticker');
+    if (logs.length === 0) {
+      ticker.innerHTML = '<div style="color:var(--text-dim);text-align:center;padding:20px">No requests yet</div>';
+    } else {
+      ticker.innerHTML = logs.map(l => {
+        const time = new Date(l.createdAt).toLocaleTimeString();
+        const statusClass = l.status >= 200 && l.status < 300 ? 'status-ok' : 'status-err';
+        return `<div class="ticker-item">
+          <span class="ticker-time">${time}</span>
+          <span class="ticker-model">${l.model || '-'}</span>
+          <span class="ticker-provider">${l.providerName || '-'}</span>
+          <span class="${statusClass}">${l.status}</span>
+          <span class="ticker-latency">${l.latencyMs}ms</span>
+        </div>`;
+      }).join('');
+    }
+  } catch (err) {
+    console.error('Dashboard load error:', err);
+  }
+}
+
+async function loadProviders() {
+  const providers = await fetch(API + '/providers').then(r => r.json());
+  const grid = document.getElementById('provider-grid');
+  if (providers.length === 0) {
+    grid.innerHTML = '<div style="color:var(--text-dim);padding:40px;text-align:center">No providers configured. Add one to get started.</div>';
+    return;
+  }
+  grid.innerHTML = providers.map(p => {
+    const badge = p.apiType === 'anthropic' ? 'badge-anthropic' : 'badge-openai';
+    const masked = p.apiKey ? p.apiKey.slice(0, 8) + '...' + p.apiKey.slice(-4) : 'none';
+    return `<div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">${esc(p.name)}</div>
+          <div class="card-meta">${esc(p.baseUrl)}</div>
+        </div>
+        <span class="card-badge ${badge}">${p.apiType}</span>
+      </div>
+      <div class="card-meta">Key: ${masked}</div>
+      <div class="card-actions">
+        <button class="btn btn-sm" onclick="testProvider('${p.id}')">Test</button>
+        <button class="btn btn-sm" onclick='openProviderModal(${JSON.stringify(p)})'>Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteProvider('${p.id}','${esc(p.name)}')">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function loadModels() {
+  const models = await fetch(API + '/models').then(r => r.json());
+  const stats = await fetch(API + '/stats').then(r => r.json());
+  const cooldowns = stats.cooldowns || {};
+  const grid = document.getElementById('model-grid');
+  if (models.length === 0) {
+    grid.innerHTML = '<div style="color:var(--text-dim);padding:40px;text-align:center">No models configured. Add one to get started.</div>';
+    return;
+  }
+  grid.innerHTML = models.map(m => {
+    const deps = (m.deployments || []).map((d, i) => {
+      const isCooldown = cooldowns[d.id];
+      const statusBadge = !d.enabled ? '<span class="card-badge badge-offline">disabled</span>'
+        : isCooldown ? '<span class="card-badge badge-cooldown">cooldown</span>'
+        : '<span class="card-badge badge-healthy">healthy</span>';
+      return `<div class="dep-item">
+        <span class="dep-order">#${d.order}</span>
+        <span class="dep-model">${esc(d.modelName)}</span>
+        <span class="dep-provider">${esc(d.providerName)}</span>
+        ${statusBadge}
+        <button class="btn btn-sm btn-icon" onclick="toggleDeployment('${d.id}',${d.enabled})" title="${d.enabled ? 'Disable' : 'Enable'}">${d.enabled ? '⏸' : '▶'}</button>
+        <button class="btn btn-sm btn-icon btn-danger" onclick="deleteDeployment('${d.id}')" title="Remove">✕</button>
+      </div>`;
+    }).join('');
+
+    return `<div class="card">
+      <div class="card-header">
+        <div class="card-title">${esc(m.name)}</div>
+        <button class="btn btn-sm btn-danger" onclick="deleteModel('${m.id}','${esc(m.name)}')">Delete</button>
+      </div>
+      <div class="dep-list">${deps || '<div style="color:var(--text-dim);font-size:11px;padding:8px">No deployments</div>'}</div>
+      <div class="card-actions">
+        <button class="btn btn-sm btn-primary" onclick="openDeployModal('${m.id}')">+ Add Deployment</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function loadLogs() {
+  const model = document.getElementById('filter-model')?.value || '';
+  const status = document.getElementById('filter-status')?.value || '';
+  const provider = document.getElementById('filter-provider')?.value || '';
+  const params = new URLSearchParams({ limit: '100' });
+  if (model) params.set('model', model);
+  if (status) params.set('status', status);
+  if (provider) params.set('provider', provider);
+  const logs = await fetch(API + '/logs?' + params).then(r => r.json());
+  const body = document.getElementById('log-body');
+  body.innerHTML = logs.map(l => {
+    const time = new Date(l.createdAt).toLocaleString();
+    const statusClass = l.status >= 200 && l.status < 300 ? 'status-ok' : l.status >= 400 && l.status < 500 ? 'status-warn' : 'status-err';
+    const tokens = (l.tokensIn || l.tokensOut) ? `${l.tokensIn}→${l.tokensOut}` : '-';
+    return `<tr>
+      <td>${time}</td>
+      <td>${l.model || '-'}</td>
+      <td>${l.providerName || '-'}</td>
+      <td class="${statusClass}">${l.status}</td>
+      <td>${l.latencyMs}ms</td>
+      <td>${tokens}</td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)" title="${esc(l.error || '')}">${esc(l.error || '-')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function toggleAutoRefresh() {
+  autoRefresh = !autoRefresh;
+  document.getElementById('auto-refresh').classList.toggle('on', autoRefresh);
+}
+
+// --- Init ---
+loadDashboard();
+loadProviders();
+loadModels();
+
+// Auto-refresh
+setInterval(() => {
+  if (autoRefresh) {
+    const activePage = document.querySelector('.page.active')?.id;
+    if (activePage === 'page-dashboard') loadDashboard();
+    else if (activePage === 'page-logs') loadLogs();
+  }
+}, 5000);
+</script>
+</body>
+</html>
