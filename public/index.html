@@ -415,6 +415,31 @@ body {
 .dep-item.dep-dragging { opacity: 0.4; border-color: var(--green); }
 .dep-item.dep-drag-over { border-top: 2px solid var(--green); }
 
+
+/* Log detail modal */
+.log-detail { font-size: 12px; }
+.log-detail-row { display: flex; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.log-detail-label { width: 120px; color: var(--text-dim); flex-shrink: 0; font-weight: 500; }
+.log-detail-value { flex: 1; word-break: break-all; }
+.log-detail-error {
+  background: rgba(255,51,85,0.08); border: 1px solid rgba(255,51,85,0.2);
+  border-radius: 6px; padding: 12px; margin-top: 12px;
+  font-family: var(--font-mono); font-size: 11px; color: var(--red);
+  max-height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+}
+.log-detail-success {
+  background: rgba(0,255,136,0.08); border: 1px solid rgba(0,255,136,0.2);
+  border-radius: 6px; padding: 12px; margin-top: 12px; color: var(--green);
+  font-size: 12px;
+}
+.log-detail-status {
+  display: inline-block; padding: 2px 10px; border-radius: 4px;
+  font-weight: 700; font-size: 13px;
+}
+.log-detail-status.s-ok { background: rgba(0,255,136,0.15); color: var(--green); }
+.log-detail-status.s-warn { background: rgba(255,170,0,0.15); color: var(--amber); }
+.log-detail-status.s-err { background: rgba(255,51,85,0.15); color: var(--red); }
+
 /* Chain Builder */
 .chain-builder { min-height: 60px; }
 .chain-builder-item {
@@ -688,6 +713,15 @@ body {
     </div>
     <div class="form-group"><label>Rate Limit (requests/min, 0 = unlimited)</label><input type="number" id="key-rate" value="0" min="0"></div>
     <div class="modal-actions"><button class="btn" onclick="closeModal('key-modal')">Cancel</button><button class="btn btn-primary" onclick="saveKey()">Save</button></div>
+  </div>
+</div>
+
+<!-- LOG DETAIL MODAL -->
+<div class="modal-overlay" id="log-modal">
+  <div class="modal" style="width:600px;max-height:85vh">
+    <div class="modal-title">Request Detail</div>
+    <div id="log-detail-content" class="log-detail"></div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal('log-modal')">Close</button></div>
   </div>
 </div>
 
@@ -1049,8 +1083,46 @@ async function loadLogs() {
     const time = new Date(l.createdAt).toLocaleString();
     const sc = l.status>=200&&l.status<300?'status-ok':l.status>=400&&l.status<500?'status-warn':'status-err';
     const tk = (l.tokensIn||l.tokensOut)?l.tokensIn+'→'+l.tokensOut:'-';
-    return `<tr><td>${time}</td><td>${l.model||'-'}</td><td>${l.providerName||'-'}</td><td class="${sc}">${l.status}</td><td>${l.latencyMs}ms</td><td>${tk}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)" title="${esc(l.error||'')}">${esc(l.error||'-')}</td></tr>`;
+    const hasErr = l.error && l.error !== '-';
+    return `<tr style="cursor:pointer" onclick='showLogDetail(${JSON.stringify(l).replace(/'/g,"&#39;")})'>
+      <td>${time}</td><td>${l.model||'-'}</td><td>${l.providerName||'-'}</td>
+      <td class="${sc}">${l.status}</td><td>${l.latencyMs}ms</td><td>${tk}</td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        ${hasErr ? '<span style="color:var(--red);cursor:pointer">⚠ '+esc(l.error).slice(0,40)+(l.error.length>40?'…':'')+'</span>' : '<span style="color:var(--text-dim)">—</span>'}
+      </td></tr>`;
   }).join('');
+}
+
+
+function showLogDetail(log) {
+  const sc = log.status>=200&&log.status<300?'s-ok':log.status>=400&&log.status<500?'s-warn':'s-err';
+  const time = new Date(log.createdAt).toLocaleString();
+  const tk = (log.tokensIn||log.tokensOut) ? log.tokensIn+' → '+log.tokensOut : '—';
+
+  let errorBlock = '';
+  if (log.error) {
+    // Try to pretty-print JSON errors
+    let errDisplay = log.error;
+    try {
+      const parsed = JSON.parse(log.error);
+      errDisplay = JSON.stringify(parsed, null, 2);
+    } catch {}
+    errorBlock = `<div style="margin-top:16px"><div style="font-weight:600;color:var(--red);margin-bottom:8px">⚠ Error</div><div class="log-detail-error">${esc(errDisplay)}</div></div>`;
+  } else {
+    errorBlock = '<div class="log-detail-success">✓ Request completed successfully</div>';
+  }
+
+  document.getElementById('log-detail-content').innerHTML = `
+    <div class="log-detail-row"><span class="log-detail-label">Time</span><span class="log-detail-value">${time}</span></div>
+    <div class="log-detail-row"><span class="log-detail-label">Model</span><span class="log-detail-value" style="color:var(--purple);font-weight:600">${esc(log.model||'-')}</span></div>
+    <div class="log-detail-row"><span class="log-detail-label">Provider</span><span class="log-detail-value" style="color:var(--cyan)">${esc(log.providerName||'-')}</span></div>
+    <div class="log-detail-row"><span class="log-detail-label">Status</span><span class="log-detail-value"><span class="log-detail-status ${sc}">${log.status}</span></span></div>
+    <div class="log-detail-row"><span class="log-detail-label">Latency</span><span class="log-detail-value" style="color:var(--amber)">${log.latencyMs}ms</span></div>
+    <div class="log-detail-row"><span class="log-detail-label">Tokens</span><span class="log-detail-value">${tk}</span></div>
+    <div class="log-detail-row"><span class="log-detail-label">Request ID</span><span class="log-detail-value" style="font-size:10px;color:var(--text-dim)">${esc(log.id||'-')}</span></div>
+    ${errorBlock}
+  `;
+  document.getElementById('log-modal').classList.add('open');
 }
 
 function toggleAutoRefresh() {
