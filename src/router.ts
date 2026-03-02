@@ -180,6 +180,7 @@ async function tryDeployment(
         trace.steps.push({ action: "success", model: dep.modelName, provider: dep.providerName, status: resp.status, latencyMs });
         trace.finalDeployment = { provider: dep.providerName, model: dep.modelName, deploymentId: dep.id };
         trace.success = true;
+        setStickyDeployment(modelName, dep.id);
 
         if (isStreaming && resp.body) {
           return { response: new Response(resp.body, {
@@ -232,10 +233,45 @@ async function tryDeployment(
   return { error: lastError, status: lastStatus, final: false };
 }
 
+
+// --- Sticky routing: prefer last successful deployment for 2 hours ---
+const STICKY_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+const stickyMap = new Map<string, { deploymentId: string; until: number }>();
+
+function getStickyDeployment(modelName: string): string | null {
+  const entry = stickyMap.get(modelName);
+  if (!entry) return null;
+  if (Date.now() > entry.until) { stickyMap.delete(modelName); return null; }
+  return entry.deploymentId;
+}
+
+function setStickyDeployment(modelName: string, deploymentId: string) {
+  stickyMap.set(modelName, { deploymentId, until: Date.now() + STICKY_TTL_MS });
+}
+
+export function getStickyInfo(): Record<string, { deploymentId: string; remainingMs: number }> {
+  const result: Record<string, any> = {};
+  for (const [model, entry] of stickyMap) {
+    if (Date.now() < entry.until) {
+      result[model] = { deploymentId: entry.deploymentId, remainingMs: entry.until - Date.now() };
+    }
+  }
+  return result;
+}
+
 function getHealthyDeployments(modelName: string): Deployment[] {
   const model: any = getModelByName(modelName);
   if (!model) return [];
-  return (listDeployments(model.id) as Deployment[]).filter(d => d.enabled && !isInCooldown(d.id));
+  const deps = (listDeployments(model.id) as Deployment[]).filter(d => d.enabled && !isInCooldown(d.id));
+  const stickyId = getStickyDeployment(modelName);
+  if (stickyId) {
+    const stickyIdx = deps.findIndex(d => d.id === stickyId);
+    if (stickyIdx > 0) {
+      const [sticky] = deps.splice(stickyIdx, 1);
+      deps.unshift(sticky);
+    }
+  }
+  return deps;
 }
 
 async function routeModel(modelName: string, path: string, method: string, headers: Headers, body: any, isStreaming: boolean, trace: RouteTrace): Promise<Response | null> {

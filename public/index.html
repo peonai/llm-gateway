@@ -160,6 +160,8 @@ body {
 
 .badge-unknown { background: rgba(122,122,138,0.15); color: var(--text-dim); }
 .badge-error { background: rgba(255,51,85,0.15); color: var(--red); }
+
+.badge-sticky { background: rgba(255,170,0,0.2); color: var(--amber); font-weight: 700; }
 .badge-warn { background: rgba(255,170,0,0.15); color: var(--amber); }
 
 .card-actions { display: flex; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
@@ -910,6 +912,7 @@ async function loadModels() {
     const deps = (m.deployments||[]).map(d => {
       const isCd = cd[d.id];
       const ds = depStats[d.id];
+      const isSticky = stats.sticky && stats.sticky[m.name] && stats.sticky[m.name].deploymentId === d.id;
       let sb;
       if (!d.enabled) {
         sb = '<span class="card-badge badge-offline">disabled</span>';
@@ -923,6 +926,10 @@ async function loadModels() {
         sb = '<span class="card-badge badge-warn">degraded ' + Math.round(ds.successRate*100) + '%</span>';
       } else {
         sb = '<span class="card-badge badge-healthy">healthy ' + Math.round(ds.successRate*100) + '%</span>';
+      }
+      if (isSticky) {
+        const remainMin = Math.round(stats.sticky[m.name].remainingMs / 60000);
+        sb += ' <span class="card-badge badge-sticky" title="Sticky routing active">⚡ ' + remainMin + 'min</span>';
       }
       return `<div class="dep-item" draggable="false" data-dep-id="${d.id}" data-model-id="${m.id}"
         ondragstart="depDragStart(event)" ondragover="depDragOver(event)" ondragleave="depDragLeave(event)"

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import * as db from "./db";
-import { getCooldownInfo, routeTestDirect } from "./router";
+import { getCooldownInfo, routeTestDirect, getStickyInfo } from "./router";
 
 const api = new Hono();
 
@@ -135,7 +135,7 @@ api.get("/stats", (c) => {
   const cooldownInfo = getCooldownInfo();
   const providerCount = (db.listProviders() as any[]).length;
   const modelCount = (db.listModels() as any[]).length;
-  return c.json({ summary: { ...summary, providerCount, modelCount }, deploymentStats: allStats, cooldowns: cooldownInfo });
+  return c.json({ summary: { ...summary, providerCount, modelCount }, deploymentStats: allStats, cooldowns: cooldownInfo, sticky: getStickyInfo() });
 });
 
 // --- Logs ---
