@@ -402,6 +402,14 @@ body {
   white-space: pre-wrap; word-break: break-word;
 }
 
+
+/* Deployment drag */
+.dep-item { transition: all 0.15s; }
+.dep-item[draggable="true"] { cursor: grab; }
+.dep-item[draggable="true"]:active { cursor: grabbing; }
+.dep-item.dep-dragging { opacity: 0.4; border-color: var(--green); }
+.dep-item.dep-drag-over { border-top: 2px solid var(--green); }
+
 /* Chain Builder */
 .chain-builder { min-height: 60px; }
 .chain-builder-item {
@@ -553,10 +561,22 @@ body {
         <div class="pg-target-tabs">
           <div class="pg-target-tab active" data-type="model" onclick="pgSwitchTab('model')">Models</div>
           <div class="pg-target-tab" data-type="chain" onclick="pgSwitchTab('chain')">Chains</div>
+          <div class="pg-target-tab" data-type="custom" onclick="pgSwitchTab('custom')">Custom</div>
         </div>
 
         <div id="pg-model-grid" class="pg-selector-grid"></div>
         <div id="pg-chain-grid" class="pg-selector-grid" style="display:none"></div>
+        <div id="pg-custom-grid" style="display:none">
+          <div class="form-group">
+            <label>Model Name</label>
+            <input type="text" id="pg-custom-model" placeholder="Model name at provider (e.g. claude-sonnet-4-20250514)">
+          </div>
+          <div class="form-group">
+            <label>Provider</label>
+            <select id="pg-custom-provider"></select>
+          </div>
+          <button class="btn" onclick="pgSelectCustom()" style="width:100%;margin-top:8px">Select</button>
+        </div>
 
         <input type="hidden" id="pg-model" value="">
 
@@ -716,6 +736,13 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
 // Restore tab from hash on load
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (h) switchTab(h); });
 
+
+// --- ESC to close modals ---
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+  }
+});
 // --- Toast ---
 function toast(msg, type='success') {
   const el = document.createElement('div');
@@ -833,10 +860,53 @@ async function loadModels() {
     const deps = (m.deployments||[]).map(d => {
       const isCd = cd[d.id];
       const sb = !d.enabled ? '<span class="card-badge badge-offline">disabled</span>' : isCd ? '<span class="card-badge badge-cooldown">cooldown</span>' : '<span class="card-badge badge-healthy">healthy</span>';
-      return `<div class="dep-item"><span class="dep-order">#${d.order}</span><span class="dep-model">${esc(d.modelName)}</span><span class="dep-provider">${esc(d.providerName)}</span>${sb}<button class="btn btn-sm btn-icon" onclick="openDeployModal('${m.id}',{id:'${d.id}',modelName:'${esc(d.modelName)}',providerId:'${d.providerId}',order:${d.order},timeout:${d.timeout},maxRetries:${d.maxRetries}})" title="Edit">✎</button><button class="btn btn-sm btn-icon" onclick="toggleDeployment('${d.id}',${d.enabled})" title="${d.enabled?'Disable':'Enable'}">${d.enabled?'⏸':'▶'}</button><button class="btn btn-sm btn-icon btn-danger" onclick="deleteDeployment('${d.id}')" title="Remove">✕</button></div>`;
+      return `<div class="dep-item" draggable="true" data-dep-id="${d.id}" data-model-id="${m.id}"
+        ondragstart="depDragStart(event)" ondragover="depDragOver(event)" ondragleave="depDragLeave(event)"
+        ondrop="depDrop(event)" ondragend="depDragEnd(event)">
+        <span style="cursor:grab;color:var(--text-dim);margin-right:4px">⠿</span><span class="dep-order">#${d.order}</span><span class="dep-model">${esc(d.modelName)}</span><span class="dep-provider">${esc(d.providerName)}</span>${sb}<button class="btn btn-sm btn-icon" onclick="openDeployModal('${m.id}',{id:'${d.id}',modelName:'${esc(d.modelName)}',providerId:'${d.providerId}',order:${d.order},timeout:${d.timeout},maxRetries:${d.maxRetries}})" title="Edit">✎</button><button class="btn btn-sm btn-icon" onclick="toggleDeployment('${d.id}',${d.enabled})" title="${d.enabled?'Disable':'Enable'}">${d.enabled?'⏸':'▶'}</button><button class="btn btn-sm btn-icon btn-danger" onclick="deleteDeployment('${d.id}')" title="Remove">✕</button></div>`;
     }).join('');
     return `<div class="card"><div class="card-header"><div class="card-title">${esc(m.name)}</div><div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="openModelModal({id:'${m.id}',name:'${esc(m.name).replace(/'/g,"\\'")}'})">Edit</button><button class="btn btn-sm btn-danger" onclick="deleteModel('${m.id}','${esc(m.name)}')">Delete</button></div></div><div>${deps||'<div style="color:var(--text-dim);font-size:11px;padding:8px">No deployments</div>'}</div><div class="card-actions"><button class="btn btn-sm btn-primary" onclick="openDeployModal('${m.id}')">+ Add Deployment</button></div></div>`;
   }).join('');
+}
+
+
+// --- Deployment drag reorder ---
+let depDragId = null;
+function depDragStart(e) {
+  depDragId = e.currentTarget.dataset.depId;
+  e.currentTarget.classList.add('dep-dragging');
+  e.dataTransfer.effectAllowed = 'move';
+}
+function depDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('dep-drag-over'); }
+function depDragLeave(e) { e.currentTarget.classList.remove('dep-drag-over'); }
+function depDragEnd(e) {
+  e.currentTarget.classList.remove('dep-dragging');
+  document.querySelectorAll('.dep-drag-over').forEach(el => el.classList.remove('dep-drag-over'));
+}
+async function depDrop(e) {
+  e.preventDefault(); e.currentTarget.classList.remove('dep-drag-over');
+  const targetId = e.currentTarget.dataset.depId;
+  const modelId = e.currentTarget.dataset.modelId;
+  if (!depDragId || depDragId === targetId) return;
+  // Collect all dep-items for this model in DOM order after the swap
+  const container = e.currentTarget.parentElement;
+  const items = [...container.querySelectorAll('.dep-item')];
+  const ids = items.map(el => el.dataset.depId);
+  // Swap positions
+  const fromIdx = ids.indexOf(depDragId);
+  const toIdx = ids.indexOf(targetId);
+  if (fromIdx < 0 || toIdx < 0) return;
+  ids.splice(fromIdx, 1);
+  ids.splice(toIdx, 0, depDragId);
+  // Update order via API
+  for (let i = 0; i < ids.length; i++) {
+    await fetch(API+'/deployments/'+ids[i], {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({order: i+1})
+    });
+  }
+  loadModels();
 }
 
 // ============ API KEYS ============
@@ -1266,6 +1336,7 @@ function pgSwitchTab(type) {
   document.querySelectorAll(".pg-target-tab").forEach(t => t.classList.toggle("active", t.dataset.type === type));
   document.getElementById("pg-model-grid").style.display = type === "model" ? "" : "none";
   document.getElementById("pg-chain-grid").style.display = type === "chain" ? "" : "none";
+  document.getElementById("pg-custom-grid").style.display = type === "custom" ? "" : "none";
 }
 
 function pgSelect(type, name) {
@@ -1302,6 +1373,11 @@ async function loadPlaygroundModels() {
     }).join("");
   }
 
+  // Custom provider dropdown
+  const customProvSel = document.getElementById("pg-custom-provider");
+  const providers = await fetch(API+"/providers").then(r=>r.json());
+  customProvSel.innerHTML = providers.map(p => `<option value="${p.id}" data-base="${p.baseUrl}" data-key="${p.apiKey}" data-type="${p.apiType}">${p.name} (${p.apiType})</option>`).join("");
+
   // Chains grid
   const cg = document.getElementById("pg-chain-grid");
   const activeChains = chains.filter(c => c.enabled);
@@ -1331,6 +1407,19 @@ async function loadPlaygroundModels() {
   }
 }
 
+function pgSelectCustom() {
+  const model = document.getElementById("pg-custom-model").value;
+  const provEl = document.getElementById("pg-custom-provider");
+  const provId = provEl.value;
+  const provName = provEl.options[provEl.selectedIndex]?.text || "";
+  if (!model) { toast("Model name required", "error"); return; }
+  pgSelected = { type: "custom", name: model, providerId: provId, providerName: provName };
+  document.getElementById("pg-model").value = model;
+  // Visual feedback
+  document.querySelectorAll(".pg-selector-item").forEach(el => el.classList.remove("selected"));
+  toast("Custom: " + model + " via " + provName);
+}
+
 async function runPlayground() {
   const model = document.getElementById("pg-model").value;
   const message = document.getElementById("pg-message").value;
@@ -1346,7 +1435,7 @@ async function runPlayground() {
     const resp = await fetch(API + "/test-route", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, message }),
+      body: JSON.stringify({ model, message, ...(pgSelected?.type === "custom" ? { providerId: pgSelected.providerId } : {}) }),
     });
     const trace = await resp.json();
     renderTrace(trace);
