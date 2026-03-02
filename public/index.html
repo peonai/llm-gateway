@@ -834,15 +834,17 @@ async function testProvider(id) {
   btn.textContent = 'Test';
 }
 
+let providerCache = {};
 async function loadProviders() {
   const ps = await fetch(API+'/providers').then(r=>r.json());
   const g = document.getElementById('provider-grid');
+  ps.forEach(p => providerCache[p.id] = p);
   if (!ps.length) { g.innerHTML = '<div style="color:var(--text-dim);padding:40px;text-align:center">No providers. Add one to start.</div>'; return; }
   g.innerHTML = ps.map(p => {
     const badge = p.apiType==='anthropic' ? 'badge-anthropic' : 'badge-openai';
     const masked = p.apiKey ? p.apiKey.slice(0,8)+'...'+p.apiKey.slice(-4) : 'none';
     const tags = (p.tags||'').split(',').filter(t=>t.trim()).map(t => `<span class="prov-tag">${esc(t.trim())}</span>`).join('');
-    return `<div class="card"><div class="card-header"><div><div class="card-title">${esc(p.name)}</div><div class="card-meta">${esc(p.baseUrl)}</div></div><div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap"><span class="card-badge ${badge}">${p.apiType}</span>${tags}</div></div><div class="card-meta">Key: ${masked}</div><div class="card-actions"><button class="btn btn-sm" onclick="testProvider('${p.id}')">Test</button><button class="btn btn-sm" onclick='openProviderModal(${JSON.stringify(p)})'>Edit</button><button class="btn btn-sm btn-danger" onclick="deleteProvider('${p.id}','${esc(p.name)}')">Delete</button></div></div>`;
+    return `<div class="card"><div class="card-header"><div><div class="card-title">${esc(p.name)}</div><div class="card-meta">${esc(p.baseUrl)}</div></div><div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap"><span class="card-badge ${badge}">${p.apiType}</span>${tags}</div></div><div class="card-meta">Key: ${masked}</div><div class="card-actions"><button class="btn btn-sm" onclick="testProvider('${p.id}')">Test</button><button class="btn btn-sm" onclick="openProviderModal(providerCache['${p.id}'])">Edit</button><button class="btn btn-sm btn-danger" onclick="deleteProvider('${p.id}','${esc(p.name)}')">Delete</button></div></div>`;
   }).join('');
 }
 
