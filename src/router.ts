@@ -185,7 +185,7 @@ async function tryDeployment(
           return { response: new Response(resp.body, {
             status: resp.status,
             headers: { "Content-Type": resp.headers.get("Content-Type") || "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive",
-              "X-Route-Trace": JSON.stringify(trace) },
+              "X-Route-Provider": dep.providerName, "X-Route-Model": dep.modelName },
           }), final: true };
         }
 
@@ -197,7 +197,7 @@ async function tryDeployment(
           if (tokensIn || tokensOut) insertLog({ model: modelName, deploymentId: dep.id, providerName: dep.providerName, status: resp.status, latencyMs, tokensIn, tokensOut });
         } catch {}
 
-        return { response: new Response(respBody, { status: resp.status, headers: { "Content-Type": "application/json", "X-Route-Trace": JSON.stringify(trace) } }), final: true };
+        return { response: new Response(respBody, { status: resp.status, headers: { "Content-Type": "application/json", "X-Route-Provider": dep.providerName, "X-Route-Model": dep.modelName } }), final: true };
       }
 
       const errorBody = await resp.text();
