@@ -32,6 +32,7 @@ const consecutiveFailsMap = new Map<string, number>();
 const COOLDOWN_BASE = 120_000;
 const MAX_CONSECUTIVE_FAILS = 3;
 
+
 function isInCooldown(deploymentId: string): boolean {
   const until = cooldowns.get(deploymentId);
   if (!until) return false;
@@ -43,9 +44,10 @@ function isInCooldown(deploymentId: string): boolean {
   return true;
 }
 
-function recordSuccess(deploymentId: string) {
+function recordSuccess(deploymentId: string, modelName?: string) {
   consecutiveFailsMap.set(deploymentId, 0);
   cooldowns.delete(deploymentId);
+
 }
 
 function recordFailure(deploymentId: string) {
@@ -169,7 +171,7 @@ async function tryDeployment(
       const latencyMs = Date.now() - start;
 
       if (resp.ok) {
-        recordSuccess(dep.id);
+        recordSuccess(dep.id, modelName);
         updateStats(dep.id, {
           totalRequests: (getStats(dep.id)?.totalRequests ?? 0) + 1,
           successCount: (getStats(dep.id)?.successCount ?? 0) + 1,
@@ -249,11 +251,18 @@ function setStickyDeployment(modelName: string, deploymentId: string) {
   stickyMap.set(modelName, { deploymentId, until: Date.now() + STICKY_TTL_MS });
 }
 
-export function getStickyInfo(): Record<string, { deploymentId: string; remainingMs: number }> {
+export function getStickyInfo(): Record<string, { deploymentId: string; remainingMs: number; providerName?: string; modelName?: string }> {
   const result: Record<string, any> = {};
+  const now = Date.now();
   for (const [model, entry] of stickyMap) {
-    if (Date.now() < entry.until) {
-      result[model] = { deploymentId: entry.deploymentId, remainingMs: entry.until - Date.now() };
+    if (now < entry.until) {
+      const dep = (listDeployments() as any[]).find((d: any) => d.id === entry.deploymentId);
+      result[model] = {
+        deploymentId: entry.deploymentId,
+        remainingMs: entry.until - now,
+        providerName: dep?.providerName,
+        modelName: dep?.modelName,
+      };
     }
   }
   return result;
@@ -429,3 +438,4 @@ export async function routeTestDirect(modelName: string, provider: any, headers:
   trace.totalLatencyMs = Date.now() - traceStart;
   return trace;
 }
+

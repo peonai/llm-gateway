@@ -827,7 +827,8 @@ async function saveProvider() {
 }
 
 async function deleteProvider(id, name) { if (!confirm('Delete "'+name+'"?')) return; await fetch(API+'/providers/'+id,{method:'DELETE'}); toast('Deleted'); loadProviders(); loadModels(); loadChains(); loadDashboard();
-  loadLastRequest(); }
+  loadLastRequest();
+  loadStickyRoutes(); }
 
 async function testProvider(id) {
   const btn = event.target; btn.textContent = '...';
@@ -1630,6 +1631,29 @@ function renderTrace(trace) {
   traceEl.innerHTML = `<div class="trace-flow">${stepsHtml}</div>${summaryHtml}`;
 }
 
+
+
+// --- Sticky Routes ---
+async function loadStickyRoutes() {
+  const stats = await fetch(API+"/stats").then(r=>r.json());
+  const sticky = stats.sticky || {};
+  const el = document.getElementById("sticky-routes-bar");
+  if (!el) return;
+  const entries = Object.entries(sticky);
+  if (!entries.length) { el.innerHTML = ""; return; }
+  el.innerHTML = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">
+    ${entries.map(([model, s]) => {
+      const mins = Math.round(s.remainingMs / 60000);
+      return `<div style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(0,255,136,0.08);border:1px solid rgba(0,255,136,0.2);border-radius:4px;font-size:10px">
+        <span style="color:var(--green)">⚡</span>
+        <span style="color:var(--text-dim)">${esc(model)}</span>
+        <span style="color:var(--text-dim)">→</span>
+        <span style="color:var(--cyan)">${esc(s.providerName||"?")}</span>
+        <span style="color:var(--text-dim);font-size:9px">${mins}min</span>
+      </div>`;
+    }).join("")}
+  </div>`;
+}
 
 // --- Last Request ---
 async function loadLastRequest() {
