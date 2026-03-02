@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import * as db from "./db";
-import { getCooldownInfo, routeTestDirect, getStickyInfo, clearStickyRoute } from "./router";
+import { getCooldownInfo, routeTestDirect, getStickyInfo, clearStickyRoute, setStickyDeployment } from "./router";
 
 const api = new Hono();
 
@@ -149,6 +149,12 @@ api.get("/logs", (c) => {
 });
 
 // Sticky routes
+api.post("/sticky", async (c) => {
+  const { modelName, deploymentId } = await c.req.json();
+  if (!modelName || !deploymentId) return c.json({ error: "modelName and deploymentId required" }, 400);
+  setStickyDeployment(modelName, deploymentId);
+  return c.json({ ok: true });
+});
 api.delete("/sticky/:model", (c) => {
   clearStickyRoute(decodeURIComponent(c.req.param("model")));
   return c.json({ ok: true });

@@ -525,6 +525,12 @@ body {
   <!-- DASHBOARD -->
   <div class="page active" id="page-dashboard">
     <div id="sticky-routes-bar" style="margin-bottom:8px"></div>
+    <div id="sticky-manual" style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
+      <span style="font-size:10px;color:var(--text-dim)">Pin:</span>
+      <select id="sticky-model-select" style="flex:1;max-width:200px;padding:4px 8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:var(--font)"></select>
+      <select id="sticky-dep-select" style="flex:1;max-width:280px;padding:4px 8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:var(--font)"></select>
+      <button onclick="manualSticky()" style="padding:4px 10px;background:var(--green);border:none;border-radius:4px;color:var(--bg);cursor:pointer;font-size:10px;font-weight:600">Pin 2h</button>
+    </div>
     <div id="last-request-card" style="margin-bottom:12px"></div>
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-label">Total Requests</div><div class="stat-value blue" id="stat-total">0</div></div>
@@ -1660,6 +1666,30 @@ async function loadStickyRoutes() {
 }
 
 
+// --- Manual Sticky ---
+async function loadStickySelects() {
+  const models = await fetch(API+"/models").then(r=>r.json());
+  const ms = document.getElementById("sticky-model-select");
+  ms.innerHTML = '<option value="">Select model...</option>' + models.map(m => `<option value="${esc(m.name)}">${esc(m.name)}</option>`).join("");
+  ms.onchange = loadStickyDeps;
+}
+async function loadStickyDeps() {
+  const model = document.getElementById("sticky-model-select").value;
+  const ds = document.getElementById("sticky-dep-select");
+  if (!model) { ds.innerHTML = '<option value="">Select deployment...</option>'; return; }
+  const deps = await fetch(API+"/deployments").then(r=>r.json());
+  const filtered = deps.filter(d => d.modelName === model || d.model === model);
+  ds.innerHTML = '<option value="">Select deployment...</option>' + filtered.map(d => `<option value="${d.id}">${esc(d.providerName)} / ${esc(d.modelName)}</option>`).join("");
+}
+async function manualSticky() {
+  const modelName = document.getElementById("sticky-model-select").value;
+  const deploymentId = document.getElementById("sticky-dep-select").value;
+  if (!modelName || !deploymentId) { toast("Select model and deployment"); return; }
+  await fetch(API+"/sticky", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({modelName, deploymentId}) });
+  toast("Pinned for 2h");
+  loadStickyRoutes();
+}
+
 async function clearSticky(model) {
   const url = model ? API+"/sticky/"+encodeURIComponent(model) : API+"/sticky";
   await fetch(url, { method: "DELETE" });
@@ -1689,11 +1719,11 @@ async function loadLastRequest() {
 // Init
 const initTab = location.hash.slice(1);
 if (initTab && document.getElementById('page-' + initTab)) { switchTab(initTab); } else { switchTab('dashboard'); }
-loadDashboard(); loadLastRequest(); loadStickyRoutes(); loadProviders(); loadModels(); loadKeys(); loadChains();
+loadDashboard(); loadLastRequest(); loadStickyRoutes(); loadStickySelects(); loadProviders(); loadModels(); loadKeys(); loadChains();
 setInterval(() => {
   if (!autoRefresh) return;
   const p = document.querySelector('.page.active')?.id;
-  if (p==='page-dashboard') { loadDashboard(); loadLastRequest(); loadStickyRoutes(); }
+  if (p==='page-dashboard') { loadDashboard(); loadLastRequest(); loadStickyRoutes(); loadStickySelects(); }
   else if (p==='page-logs') loadLogs();
 }, 5000);
 </script>

@@ -252,7 +252,7 @@ export function clearStickyRoute(modelName?: string) {
   else stickyMap.clear();
 }
 
-function setStickyDeployment(modelName: string, deploymentId: string) {
+export function setStickyDeployment(modelName: string, deploymentId: string) {
   stickyMap.set(modelName, { deploymentId, until: Date.now() + STICKY_TTL_MS });
 }
 
