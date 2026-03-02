@@ -197,3 +197,22 @@ api.delete("/chains/:id", (c) => {
   db.deleteChain(c.req.param("id"));
   return c.json({ ok: true });
 });
+
+// --- Test Route ---
+import { routeTestRequest } from "./router";
+
+api.post("/test-route", async (c) => {
+  const body = await c.req.json();
+  const model = body.model;
+  const message = body.message || "hi";
+  if (!model) return c.json({ error: "model is required" }, 400);
+
+  const testBody = {
+    model,
+    max_tokens: 20,
+    messages: [{ role: "user", content: message }],
+  };
+
+  const trace = await routeTestRequest(model, "/v1/messages", "POST", c.req.raw.headers, testBody);
+  return c.json(trace);
+});

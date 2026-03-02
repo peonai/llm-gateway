@@ -305,6 +305,49 @@ body {
 .chain-usage code { color: var(--green); font-style: normal; }
 .form-group textarea { width: 100%; padding: 8px 12px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: var(--font); font-size: 12px; outline: none; min-height: 120px; resize: vertical; transition: border-color 0.2s; }
 .form-group textarea:focus { border-color: var(--green); }
+
+/* Playground */
+.playground-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 900px) { .playground-layout { grid-template-columns: 1fr; } }
+.playground-input { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+.playground-output { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+.trace-flow { margin-top: 16px; }
+.trace-step {
+  display: flex; align-items: flex-start; gap: 12px; padding: 8px 0;
+  position: relative;
+}
+.trace-step::before {
+  content: ''; position: absolute; left: 11px; top: 28px; bottom: -8px;
+  width: 2px; background: var(--border);
+}
+.trace-step:last-child::before { display: none; }
+.trace-dot {
+  width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; z-index: 1;
+}
+.trace-dot-chain { background: rgba(170,102,255,0.2); color: var(--purple); border: 2px solid var(--purple); }
+.trace-dot-model { background: rgba(68,136,255,0.2); color: var(--blue); border: 2px solid var(--blue); }
+.trace-dot-deploy { background: rgba(255,170,0,0.2); color: var(--amber); border: 2px solid var(--amber); }
+.trace-dot-ok { background: rgba(0,255,136,0.2); color: var(--green); border: 2px solid var(--green); }
+.trace-dot-err { background: rgba(255,51,85,0.2); color: var(--red); border: 2px solid var(--red); }
+.trace-dot-skip { background: rgba(102,102,102,0.2); color: var(--text-dim); border: 2px solid var(--text-dim); }
+.trace-content { flex: 1; min-width: 0; }
+.trace-action { font-weight: 600; font-size: 12px; }
+.trace-detail { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.trace-detail code { color: var(--green); }
+.trace-summary {
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; margin-top: 16px;
+}
+.trace-summary-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; }
+.trace-summary-label { color: var(--text-dim); }
+.trace-summary-value { font-weight: 600; }
+.response-box {
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px; margin-top: 12px; font-size: 12px; max-height: 200px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-word;
+}
 </style>
 </head>
 <body>
@@ -317,6 +360,7 @@ body {
     <div class="nav-tab" data-page="models">Models</div>
     <div class="nav-tab" data-page="chains">Chains</div>
     <div class="nav-tab" data-page="keys">API Keys</div>
+    <div class="nav-tab" data-page="playground">Playground</div>
     <div class="nav-tab" data-page="logs">Logs</div>
   </div>
   <div class="nav-right">
@@ -391,6 +435,38 @@ body {
       Create API keys for clients. When keys exist, proxy endpoints require a valid <code style="color:var(--green)">gw-*</code> key via <code>Authorization: Bearer gw-...</code> or <code>x-api-key: gw-...</code>. If no keys exist, gateway runs in open mode.
     </div>
     <div class="card-grid" id="key-grid"></div>
+  </div>
+
+
+  <!-- PLAYGROUND -->
+  <div class="page" id="page-playground">
+    <div class="section-title" style="margin-bottom:16px">Route Playground</div>
+    <div class="playground-layout">
+      <div class="playground-input">
+        <div class="section-title" style="font-size:13px;margin-bottom:12px">Request</div>
+        <div class="form-group">
+          <label>Model / Chain Name</label>
+          <input type="text" id="pg-model" placeholder="e.g. claude-sonnet, best-claude, auto" list="pg-model-list">
+          <datalist id="pg-model-list"></datalist>
+        </div>
+        <div class="form-group">
+          <label>Message</label>
+          <input type="text" id="pg-message" value="Say hello in 5 words" placeholder="Test message...">
+        </div>
+        <button class="btn btn-primary" id="pg-send-btn" onclick="runPlayground()" style="width:100%;padding:10px;font-size:13px">
+          ▶ Send Test Request
+        </button>
+        <div id="pg-response" style="margin-top:16px"></div>
+      </div>
+      <div class="playground-output">
+        <div class="section-title" style="font-size:13px;margin-bottom:12px">Route Trace</div>
+        <div id="pg-trace">
+          <div style="color:var(--text-dim);text-align:center;padding:40px">
+            Send a request to see the routing trace
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- LOGS -->
@@ -518,6 +594,7 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
     if (tab.dataset.page === 'logs') loadLogs();
     if (tab.dataset.page === 'keys') loadKeys();
     if (tab.dataset.page === 'chains') loadChains();
+    if (tab.dataset.page === 'playground') loadPlaygroundModels();
   });
 });
 
@@ -820,6 +897,113 @@ async function loadChains() {
   }).join("");
 }
 
+
+
+// ============ PLAYGROUND ============
+async function loadPlaygroundModels() {
+  const models = await fetch(API+"/models").then(r=>r.json());
+  const chains = await fetch(API+"/chains").then(r=>r.json());
+  const dl = document.getElementById("pg-model-list");
+  let opts = models.map(m => `<option value="${m.name}">${m.name} (model)</option>`);
+  opts = opts.concat(chains.filter(c=>c.enabled).map(c => `<option value="${c.name}">${c.name} (${c.mode} chain)</option>`));
+  dl.innerHTML = opts.join("");
+}
+
+async function runPlayground() {
+  const model = document.getElementById("pg-model").value;
+  const message = document.getElementById("pg-message").value;
+  if (!model) { toast("Model name required", "error"); return; }
+
+  const btn = document.getElementById("pg-send-btn");
+  btn.textContent = "⏳ Routing...";
+  btn.disabled = true;
+  document.getElementById("pg-trace").innerHTML = '<div style="color:var(--text-dim);text-align:center;padding:20px">Routing in progress...</div>';
+  document.getElementById("pg-response").innerHTML = "";
+
+  try {
+    const resp = await fetch(API + "/test-route", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, message }),
+    });
+    const trace = await resp.json();
+    renderTrace(trace);
+  } catch (err) {
+    document.getElementById("pg-trace").innerHTML = `<div style="color:var(--red);padding:20px">Error: ${esc(err.message)}</div>`;
+  }
+
+  btn.textContent = "▶ Send Test Request";
+  btn.disabled = false;
+}
+
+function renderTrace(trace) {
+  const traceEl = document.getElementById("pg-trace");
+  const respEl = document.getElementById("pg-response");
+
+  // Render steps
+  const stepsHtml = trace.steps.map(s => {
+    let dotClass, icon, actionLabel, detail;
+
+    switch(s.action) {
+      case "chain_match":
+        dotClass = "trace-dot-chain"; icon = "⛓"; actionLabel = "Chain Matched";
+        detail = `Routing via chain <code>${esc(s.model)}</code> (mode: ${trace.chainMode})`;
+        break;
+      case "try_model":
+        dotClass = "trace-dot-model"; icon = "🎯"; actionLabel = "Try Model";
+        detail = `<code>${esc(s.model)}</code>` + (s.provider ? ` via <code>${esc(s.provider)}</code>` : "");
+        break;
+      case "try_deployment":
+        dotClass = "trace-dot-deploy"; icon = "→"; actionLabel = "Try Deployment";
+        detail = `<code>${esc(s.model)}</code> @ <code>${esc(s.provider)}</code>`;
+        break;
+      case "success":
+        dotClass = "trace-dot-ok"; icon = "✓"; actionLabel = "Success";
+        detail = `<code>${esc(s.provider)}</code> / <code>${esc(s.model)}</code> — ${s.status} in ${s.latencyMs}ms`;
+        break;
+      case "fail":
+        dotClass = "trace-dot-err"; icon = "✗"; actionLabel = "Failed";
+        detail = s.provider ? `<code>${esc(s.provider)}</code> / <code>${esc(s.model||"")}</code>` : "";
+        if (s.error) detail += ` — ${esc(s.error).slice(0,80)}`;
+        if (s.status) detail += ` (${s.status})`;
+        break;
+      case "skip_cooldown":
+        dotClass = "trace-dot-skip"; icon = "⏸"; actionLabel = "Skipped (Cooldown)";
+        detail = `<code>${esc(s.provider)}</code> / <code>${esc(s.model)}</code>`;
+        break;
+      case "fallback":
+        dotClass = "trace-dot-skip"; icon = "↓"; actionLabel = "Fallback";
+        detail = s.error ? esc(s.error) : "";
+        if (s.model) detail = `<code>${esc(s.model)}</code> — ` + detail;
+        break;
+      default:
+        dotClass = "trace-dot-skip"; icon = "?"; actionLabel = s.action;
+        detail = JSON.stringify(s);
+    }
+
+    return `<div class="trace-step">
+      <div class="trace-dot ${dotClass}">${icon}</div>
+      <div class="trace-content">
+        <div class="trace-action">${actionLabel}</div>
+        <div class="trace-detail">${detail}</div>
+      </div>
+    </div>`;
+  }).join("");
+
+  // Summary
+  const finalDep = trace.finalDeployment;
+  const summaryHtml = `<div class="trace-summary">
+    <div class="trace-summary-row"><span class="trace-summary-label">Request Model</span><span class="trace-summary-value" style="color:var(--blue)">${esc(trace.requestModel)}</span></div>
+    ${trace.chainName ? `<div class="trace-summary-row"><span class="trace-summary-label">Chain</span><span class="trace-summary-value" style="color:var(--purple)">${esc(trace.chainName)} (${trace.chainMode})</span></div>` : ""}
+    <div class="trace-summary-row"><span class="trace-summary-label">Result</span><span class="trace-summary-value" style="color:${trace.success?"var(--green)":"var(--red)"}">${trace.success ? "✓ Success" : "✗ Failed"}</span></div>
+    ${finalDep ? `<div class="trace-summary-row"><span class="trace-summary-label">Final Provider</span><span class="trace-summary-value" style="color:var(--cyan)">${esc(finalDep.provider)}</span></div>
+    <div class="trace-summary-row"><span class="trace-summary-label">Final Model</span><span class="trace-summary-value" style="color:var(--green)">${esc(finalDep.model)}</span></div>` : ""}
+    <div class="trace-summary-row"><span class="trace-summary-label">Total Latency</span><span class="trace-summary-value" style="color:var(--amber)">${trace.totalLatencyMs}ms</span></div>
+    <div class="trace-summary-row"><span class="trace-summary-label">Steps</span><span class="trace-summary-value">${trace.steps.length}</span></div>
+  </div>`;
+
+  traceEl.innerHTML = `<div class="trace-flow">${stepsHtml}</div>${summaryHtml}`;
+}
 
 // Init
 loadDashboard(); loadProviders(); loadModels(); loadKeys(); loadChains();

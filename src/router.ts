@@ -6,6 +6,26 @@ interface Deployment {
   providerName: string; baseUrl: string; apiKey: string; apiType: string;
 }
 
+export interface RouteTrace {
+  requestModel: string;
+  chainName?: string;
+  chainMode?: string;
+  steps: RouteStep[];
+  finalDeployment?: { provider: string; model: string; deploymentId: string };
+  success: boolean;
+  totalLatencyMs: number;
+}
+
+export interface RouteStep {
+  action: string; // "chain_match", "try_model", "try_deployment", "skip_cooldown", "fallback", "success", "fail"
+  model?: string;
+  provider?: string;
+  deploymentId?: string;
+  status?: number;
+  latencyMs?: number;
+  error?: string;
+}
+
 // In-memory cooldown tracker
 const cooldowns = new Map<string, number>();
 const consecutiveFailsMap = new Map<string, number>();
@@ -41,21 +61,14 @@ function recordFailure(deploymentId: string) {
 export function getCooldownInfo() {
   const info: Record<string, { until: number; fails: number }> = {};
   for (const [id, until] of cooldowns) {
-    if (Date.now() < until) {
-      info[id] = { until, fails: consecutiveFailsMap.get(id) ?? 0 };
-    }
+    if (Date.now() < until) info[id] = { until, fails: consecutiveFailsMap.get(id) ?? 0 };
   }
   return info;
 }
 
-// --- Forward a single request to a deployment ---
-async function forwardRequest(
-  deployment: Deployment, path: string, method: string,
-  headers: Headers, body: any
-): Promise<Response> {
+async function forwardRequest(deployment: Deployment, path: string, method: string, headers: Headers, body: any): Promise<Response> {
   const url = `${deployment.baseUrl.replace(/\/$/, "")}${path}`;
   const outHeaders: Record<string, string> = { "Content-Type": "application/json" };
-
   if (deployment.apiType === "anthropic") {
     outHeaders["x-api-key"] = deployment.apiKey;
     outHeaders["anthropic-version"] = headers.get("anthropic-version") || "2023-06-01";
@@ -64,17 +77,11 @@ async function forwardRequest(
   } else {
     outHeaders["Authorization"] = `Bearer ${deployment.apiKey}`;
   }
-
   const requestBody = { ...body, model: deployment.modelName };
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), deployment.timeout * 1000);
-
   try {
-    const resp = await fetch(url, {
-      method, headers: outHeaders,
-      body: JSON.stringify(requestBody),
-      signal: controller.signal,
-    });
+    const resp = await fetch(url, { method, headers: outHeaders, body: JSON.stringify(requestBody), signal: controller.signal });
     clearTimeout(timeoutId);
     return resp;
   } catch (err: any) {
@@ -83,15 +90,16 @@ async function forwardRequest(
   }
 }
 
-// --- Try a single deployment with retries, return response or null ---
 async function tryDeployment(
   dep: Deployment, modelName: string, path: string, method: string,
-  headers: Headers, body: any, isStreaming: boolean
+  headers: Headers, body: any, isStreaming: boolean, trace: RouteTrace
 ): Promise<{ response: Response; final: true } | { error: string; status: number; final: false }> {
   const start = Date.now();
   let retries = dep.maxRetries;
   let lastError = "";
   let lastStatus = 502;
+
+  trace.steps.push({ action: "try_deployment", model: dep.modelName, provider: dep.providerName, deploymentId: dep.id });
 
   while (retries >= 0) {
     try {
@@ -107,10 +115,15 @@ async function tryDeployment(
         });
         insertLog({ model: modelName, deploymentId: dep.id, providerName: dep.providerName, status: resp.status, latencyMs });
 
+        trace.steps.push({ action: "success", model: dep.modelName, provider: dep.providerName, status: resp.status, latencyMs });
+        trace.finalDeployment = { provider: dep.providerName, model: dep.modelName, deploymentId: dep.id };
+        trace.success = true;
+
         if (isStreaming && resp.body) {
           return { response: new Response(resp.body, {
             status: resp.status,
-            headers: { "Content-Type": resp.headers.get("Content-Type") || "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" },
+            headers: { "Content-Type": resp.headers.get("Content-Type") || "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive",
+              "X-Route-Trace": JSON.stringify(trace) },
           }), final: true };
         }
 
@@ -119,15 +132,12 @@ async function tryDeployment(
           const parsed = JSON.parse(respBody);
           const tokensIn = parsed.usage?.prompt_tokens ?? parsed.usage?.input_tokens ?? 0;
           const tokensOut = parsed.usage?.completion_tokens ?? parsed.usage?.output_tokens ?? 0;
-          if (tokensIn || tokensOut) {
-            insertLog({ model: modelName, deploymentId: dep.id, providerName: dep.providerName, status: resp.status, latencyMs, tokensIn, tokensOut });
-          }
+          if (tokensIn || tokensOut) insertLog({ model: modelName, deploymentId: dep.id, providerName: dep.providerName, status: resp.status, latencyMs, tokensIn, tokensOut });
         } catch {}
 
-        return { response: new Response(respBody, { status: resp.status, headers: { "Content-Type": "application/json" } }), final: true };
+        return { response: new Response(respBody, { status: resp.status, headers: { "Content-Type": "application/json", "X-Route-Trace": JSON.stringify(trace) } }), final: true };
       }
 
-      // Non-2xx
       const errorBody = await resp.text();
       lastError = errorBody.slice(0, 500);
       lastStatus = resp.status;
@@ -137,6 +147,7 @@ async function tryDeployment(
         failCount: (getStats(dep.id)?.failCount ?? 0) + 1,
         lastError: lastError.slice(0, 200), lastErrorAt: Date.now(),
       });
+      trace.steps.push({ action: "fail", model: dep.modelName, provider: dep.providerName, status: resp.status, latencyMs: Date.now() - start, error: lastError.slice(0, 100) });
 
       if (retries > 0) { retries--; await new Promise(r => setTimeout(r, 2000)); continue; }
       recordFailure(dep.id);
@@ -150,6 +161,7 @@ async function tryDeployment(
         failCount: (getStats(dep.id)?.failCount ?? 0) + 1,
         lastError: lastError.slice(0, 200), lastErrorAt: Date.now(),
       });
+      trace.steps.push({ action: "fail", model: dep.modelName, provider: dep.providerName, status: 502, error: lastError.slice(0, 100) });
       if (retries > 0) { retries--; await new Promise(r => setTimeout(r, 2000)); continue; }
       recordFailure(dep.id);
       break;
@@ -158,61 +170,51 @@ async function tryDeployment(
   return { error: lastError, status: lastStatus, final: false };
 }
 
-// --- Get healthy deployments for a model name ---
 function getHealthyDeployments(modelName: string): Deployment[] {
   const model: any = getModelByName(modelName);
   if (!model) return [];
-  const deps = listDeployments(model.id) as Deployment[];
-  return deps.filter(d => d.enabled && !isInCooldown(d.id));
+  return (listDeployments(model.id) as Deployment[]).filter(d => d.enabled && !isInCooldown(d.id));
 }
 
-// --- MODE: MODEL (exact match, current behavior) ---
-async function routeModel(
-  modelName: string, path: string, method: string,
-  headers: Headers, body: any, isStreaming: boolean
-): Promise<Response | null> {
+async function routeModel(modelName: string, path: string, method: string, headers: Headers, body: any, isStreaming: boolean, trace: RouteTrace): Promise<Response | null> {
+  trace.steps.push({ action: "try_model", model: modelName });
   const deps = getHealthyDeployments(modelName);
+  const model: any = getModelByName(modelName);
+  if (model) {
+    const allDeps = listDeployments(model.id) as Deployment[];
+    const cooldownDeps = allDeps.filter(d => d.enabled && isInCooldown(d.id));
+    cooldownDeps.forEach(d => trace.steps.push({ action: "skip_cooldown", model: d.modelName, provider: d.providerName, deploymentId: d.id }));
+  }
+  if (deps.length === 0) { trace.steps.push({ action: "fallback", model: modelName, error: "no healthy deployments" }); return null; }
   for (const dep of deps) {
-    const result = await tryDeployment(dep, modelName, path, method, headers, body, isStreaming);
+    const result = await tryDeployment(dep, modelName, path, method, headers, body, isStreaming, trace);
     if (result.final) return (result as any).response;
+    trace.steps.push({ action: "fallback", model: dep.modelName, provider: dep.providerName, error: "deployment failed, trying next" });
   }
   return null;
 }
 
-// --- MODE: MODELS (model-level fallback chain) ---
-async function routeModelsChain(
-  modelNames: string[], path: string, method: string,
-  headers: Headers, body: any, isStreaming: boolean
-): Promise<Response | null> {
+async function routeModelsChain(modelNames: string[], path: string, method: string, headers: Headers, body: any, isStreaming: boolean, trace: RouteTrace): Promise<Response | null> {
   for (const mn of modelNames) {
-    const resp = await routeModel(mn, path, method, headers, body, isStreaming);
+    const resp = await routeModel(mn, path, method, headers, body, isStreaming, trace);
     if (resp) return resp;
   }
   return null;
 }
 
-// --- MODE: PROVIDER (provider-priority × model-priority) ---
-async function routeProviderChain(
-  items: { provider: string; models: string[] }[],
-  path: string, method: string, headers: Headers, body: any, isStreaming: boolean
-): Promise<Response | null> {
-  // Build a flat ordered list: for each provider (by priority), for each model (by priority),
-  // find the matching deployment
+async function routeProviderChain(items: { provider: string; models: string[] }[], path: string, method: string, headers: Headers, body: any, isStreaming: boolean, trace: RouteTrace): Promise<Response | null> {
   const allProviders = listProviders() as any[];
   const providerMap = new Map(allProviders.map(p => [p.name, p]));
-
   for (const item of items) {
     const provider = providerMap.get(item.provider);
-    if (!provider) continue;
-
+    if (!provider) { trace.steps.push({ action: "fallback", provider: item.provider, error: "provider not found" }); continue; }
     for (const modelName of item.models) {
       const model: any = getModelByName(modelName);
-      if (!model) continue;
-      const deps = (listDeployments(model.id) as Deployment[])
-        .filter(d => d.providerId === provider.id && d.enabled && !isInCooldown(d.id));
-
+      if (!model) { trace.steps.push({ action: "fallback", model: modelName, provider: item.provider, error: "model not found" }); continue; }
+      trace.steps.push({ action: "try_model", model: modelName, provider: item.provider });
+      const deps = (listDeployments(model.id) as Deployment[]).filter(d => d.providerId === provider.id && d.enabled && !isInCooldown(d.id));
       for (const dep of deps) {
-        const result = await tryDeployment(dep, modelName, path, method, headers, body, isStreaming);
+        const result = await tryDeployment(dep, modelName, path, method, headers, body, isStreaming, trace);
         if (result.final) return (result as any).response;
       }
     }
@@ -220,62 +222,62 @@ async function routeProviderChain(
   return null;
 }
 
-// --- Main entry point ---
-export async function routeRequest(
-  requestModelName: string, path: string, method: string,
-  headers: Headers, body: any, isStreaming: boolean
-): Promise<Response> {
-  // 1. Check if model name matches a fallback chain
+export async function routeRequest(requestModelName: string, path: string, method: string, headers: Headers, body: any, isStreaming: boolean): Promise<Response> {
+  const traceStart = Date.now();
+  const trace: RouteTrace = { requestModel: requestModelName, steps: [], success: false, totalLatencyMs: 0 };
+
   const chain: any = getChainByName(requestModelName);
+  let response: Response | null = null;
 
   if (chain) {
     let items: any;
     try { items = JSON.parse(chain.items); } catch { items = []; }
+    trace.chainName = chain.name;
+    trace.chainMode = chain.mode;
+    trace.steps.push({ action: "chain_match", model: chain.name });
 
-    let response: Response | null = null;
-
-    if (chain.mode === "models") {
-      // items = ["claude-opus-4-6", "claude-opus-4-5", "gpt-5.3-codex", ...]
-      response = await routeModelsChain(items, path, method, headers, body, isStreaming);
-    } else if (chain.mode === "provider") {
-      // items = [{ provider: "fox-code-aws", models: ["claude-opus-4-6", ...] }, ...]
-      response = await routeProviderChain(items, path, method, headers, body, isStreaming);
-    } else {
-      // mode === "model" — just redirect to the first item as exact match
-      const targetModel = Array.isArray(items) ? items[0] : requestModelName;
-      response = await routeModel(targetModel, path, method, headers, body, isStreaming);
-    }
-
-    if (response) return response;
-    return new Response(JSON.stringify({
-      error: { message: `All fallbacks exhausted for chain "${requestModelName}" (mode: ${chain.mode})`, type: "server_error" }
-    }), { status: 503, headers: { "Content-Type": "application/json" } });
+    if (chain.mode === "models") response = await routeModelsChain(items, path, method, headers, body, isStreaming, trace);
+    else if (chain.mode === "provider") response = await routeProviderChain(items, path, method, headers, body, isStreaming, trace);
+    else { const t = Array.isArray(items) ? items[0] : requestModelName; response = await routeModel(t, path, method, headers, body, isStreaming, trace); }
+  } else {
+    response = await routeModel(requestModelName, path, method, headers, body, isStreaming, trace);
   }
 
-  // 2. No chain match — standard model routing
-  const model: any = getModelByName(requestModelName);
-  if (!model) {
-    return new Response(JSON.stringify({
-      error: { message: `Model "${requestModelName}" not found`, type: "invalid_request_error" }
-    }), { status: 404, headers: { "Content-Type": "application/json" } });
-  }
+  trace.totalLatencyMs = Date.now() - traceStart;
 
-  const deployments = listDeployments(model.id) as Deployment[];
-  const available = deployments.filter(d => d.enabled && !isInCooldown(d.id));
+  if (response) return response;
 
-  if (available.length === 0) {
-    const allCooldown = deployments.filter(d => d.enabled && isInCooldown(d.id));
-    return new Response(JSON.stringify({
-      error: { message: allCooldown.length > 0 ? `All deployments for "${requestModelName}" are in cooldown` : `No deployments available for "${requestModelName}"`, type: "server_error" }
-    }), { status: 503, headers: { "Content-Type": "application/json" } });
-  }
-
-  for (const dep of available) {
-    const result = await tryDeployment(dep, requestModelName, path, method, headers, body, isStreaming);
-    if (result.final) return (result as any).response;
-  }
-
+  trace.steps.push({ action: "fail", error: "all fallbacks exhausted" });
   return new Response(JSON.stringify({
-    error: { message: `All deployments failed for "${requestModelName}"`, type: "server_error" }
+    error: { message: chain ? `All fallbacks exhausted for chain "${requestModelName}" (mode: ${chain.mode})` : `All deployments failed for "${requestModelName}"`, type: "server_error" },
+    _trace: trace,
   }), { status: 503, headers: { "Content-Type": "application/json" } });
+}
+
+// --- Test endpoint: route with trace only, returns trace info ---
+export async function routeTestRequest(requestModelName: string, path: string, method: string, headers: Headers, body: any): Promise<RouteTrace> {
+  const traceStart = Date.now();
+  const trace: RouteTrace = { requestModel: requestModelName, steps: [], success: false, totalLatencyMs: 0 };
+
+  const chain: any = getChainByName(requestModelName);
+  let response: Response | null = null;
+
+  if (chain) {
+    let items: any;
+    try { items = JSON.parse(chain.items); } catch { items = []; }
+    trace.chainName = chain.name;
+    trace.chainMode = chain.mode;
+    trace.steps.push({ action: "chain_match", model: chain.name });
+
+    if (chain.mode === "models") response = await routeModelsChain(items, path, method, headers, body, false, trace);
+    else if (chain.mode === "provider") response = await routeProviderChain(items, path, method, headers, body, false, trace);
+    else { const t = Array.isArray(items) ? items[0] : requestModelName; response = await routeModel(t, path, method, headers, body, false, trace); }
+  } else {
+    response = await routeModel(requestModelName, path, method, headers, body, false, trace);
+  }
+
+  trace.totalLatencyMs = Date.now() - traceStart;
+  if (!response) trace.steps.push({ action: "fail", error: "all fallbacks exhausted" });
+
+  return trace;
 }
