@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import * as db from "./db";
-import { getCooldownInfo, routeTestDirect, getStickyInfo } from "./router";
+import { getCooldownInfo, routeTestDirect, getStickyInfo, clearStickyRoute } from "./router";
 
 const api = new Hono();
 

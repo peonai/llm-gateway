@@ -1641,18 +1641,27 @@ async function loadStickyRoutes() {
   if (!el) return;
   const entries = Object.entries(sticky);
   if (!entries.length) { el.innerHTML = ""; return; }
-  el.innerHTML = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">
+  el.innerHTML = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
+    <span style="font-size:10px;color:var(--text-dim);margin-right:2px">⚡ Sticky:</span>
     ${entries.map(([model, s]) => {
       const mins = Math.round(s.remainingMs / 60000);
-      return `<div style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(0,255,136,0.08);border:1px solid rgba(0,255,136,0.2);border-radius:4px;font-size:10px">
-        <span style="color:var(--green)">⚡</span>
+      return `<div style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px 3px 10px;background:rgba(0,255,136,0.08);border:1px solid rgba(0,255,136,0.2);border-radius:4px;font-size:10px">
         <span style="color:var(--text-dim)">${esc(model)}</span>
         <span style="color:var(--text-dim)">→</span>
         <span style="color:var(--cyan)">${esc(s.providerName||"?")}</span>
         <span style="color:var(--text-dim);font-size:9px">${mins}min</span>
+        <button onclick="clearSticky('${esc(model)}')" title="Clear sticky" style="margin-left:2px;background:none;border:none;color:var(--text-dim);cursor:pointer;padding:0 2px;font-size:11px;line-height:1" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--text-dim)'">×</button>
       </div>`;
     }).join("")}
+    <button onclick="clearSticky()" title="Clear all sticky routes" style="padding:3px 8px;background:none;border:1px solid var(--border);border-radius:4px;color:var(--text-dim);cursor:pointer;font-size:10px" onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-dim)'">Clear all</button>
   </div>`;
+}
+
+
+async function clearSticky(model) {
+  const url = model ? API+"/sticky/"+encodeURIComponent(model) : API+"/sticky";
+  await fetch(url, { method: "DELETE" });
+  loadStickyRoutes();
 }
 
 // --- Last Request ---
