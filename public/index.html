@@ -921,12 +921,12 @@ async function loadModels() {
           onmouseup="this.parentElement.draggable=false">⠿</span>
         <div class="dep-info">
           <div class="dep-main"><span class="dep-model">${esc(d.modelName)}</span>${sb}</div>
-          <div class="dep-meta"><span class="dep-provider">${esc(d.providerName)}</span><span>timeout ${d.timeout}s</span><span>retry ×${d.maxRetries}</span></div>
-        </div>
-        <div class="dep-actions">
-          <button class="btn btn-sm btn-icon" onclick="openDeployModal('${m.id}',{id:'${d.id}',modelName:'${esc(d.modelName)}',providerId:'${d.providerId}',order:${d.order},timeout:${d.timeout},maxRetries:${d.maxRetries}})" title="Edit">✎</button>
-          <button class="btn btn-sm btn-icon" onclick="toggleDeployment('${d.id}',${d.enabled})" title="${d.enabled?'Disable':'Enable'}">${d.enabled?'⏸':'▶'}</button>
-          <button class="btn btn-sm btn-icon btn-danger" onclick="deleteDeployment('${d.id}')" title="Remove">✕</button>
+          <div class="dep-meta"><span class="dep-provider">${esc(d.providerName)}</span><span>·</span><span>timeout ${d.timeout}s</span><span>·</span><span>retry ×${d.maxRetries}</span></div>
+          <div class="dep-actions">
+            <button class="btn btn-sm btn-icon" onclick="openDeployModal('${m.id}',{id:'${d.id}',modelName:'${esc(d.modelName)}',providerId:'${d.providerId}',order:${d.order},timeout:${d.timeout},maxRetries:${d.maxRetries}})" title="Edit">✎</button>
+            <button class="btn btn-sm btn-icon" onclick="toggleDeployment('${d.id}',${d.enabled})" title="${d.enabled?'Disable':'Enable'}">${d.enabled?'⏸':'▶'}</button>
+            <button class="btn btn-sm btn-icon btn-danger" onclick="deleteDeployment('${d.id}')" title="Remove">✕</button>
+          </div>
         </div></div>`;
     }).join('');
     return `<div class="card"><div class="card-header"><div class="card-title">${esc(m.name)}</div><div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="openModelModal({id:'${m.id}',name:'${esc(m.name).replace(/'/g,"\\'")}'})">Edit</button><button class="btn btn-sm btn-danger" onclick="deleteModel('${m.id}','${esc(m.name)}')">Delete</button></div></div><div>${deps||'<div style="color:var(--text-dim);font-size:11px;padding:8px">No deployments</div>'}</div><div class="card-actions"><button class="btn btn-sm btn-primary" onclick="openDeployModal('${m.id}')">+ Add Deployment</button></div></div>`;
