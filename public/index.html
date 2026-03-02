@@ -306,6 +306,59 @@ body {
 .form-group textarea { width: 100%; padding: 8px 12px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: var(--font); font-size: 12px; outline: none; min-height: 120px; resize: vertical; transition: border-color 0.2s; }
 .form-group textarea:focus { border-color: var(--green); }
 
+
+/* Playground Selector */
+.pg-target-tabs {
+  display: flex; gap: 4px; margin-bottom: 12px;
+  border-bottom: 1px solid var(--border); padding-bottom: 0;
+}
+.pg-target-tab {
+  padding: 8px 16px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.5px; font-weight: 500; color: var(--text-dim);
+  cursor: pointer; border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+.pg-target-tab:hover { color: var(--text); }
+.pg-target-tab.active { color: var(--green); border-bottom-color: var(--green); }
+
+.pg-selector-grid {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 280px; overflow-y: auto; padding-right: 4px;
+}
+
+.pg-selector-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; background: var(--bg-input);
+  border: 1px solid var(--border); border-radius: 6px;
+  cursor: pointer; transition: all 0.15s; user-select: none;
+}
+.pg-selector-item:hover { border-color: var(--border-hover); background: var(--bg-card-hover); }
+.pg-selector-item.selected { border-color: var(--green); background: rgba(0,255,136,0.05); box-shadow: 0 0 10px rgba(0,255,136,0.1); }
+
+.pg-selector-icon {
+  width: 32px; height: 32px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; flex-shrink: 0;
+}
+.pg-selector-icon-model { background: rgba(68,136,255,0.15); color: var(--blue); }
+.pg-selector-icon-chain-models { background: rgba(170,102,255,0.15); color: var(--purple); }
+.pg-selector-icon-chain-provider { background: rgba(0,204,255,0.15); color: var(--cyan); }
+
+.pg-selector-info { flex: 1; min-width: 0; }
+.pg-selector-name { font-weight: 600; font-size: 12px; }
+.pg-selector-meta { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+
+.pg-selector-check {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid var(--border); display: flex;
+  align-items: center; justify-content: center;
+  font-size: 11px; color: transparent; transition: all 0.15s;
+  flex-shrink: 0;
+}
+.pg-selector-item.selected .pg-selector-check {
+  border-color: var(--green); color: var(--green); background: rgba(0,255,136,0.1);
+}
+
 /* Playground */
 .playground-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 @media (max-width: 900px) { .playground-layout { grid-template-columns: 1fr; } }
@@ -495,26 +548,34 @@ body {
     <div class="section-title" style="margin-bottom:16px">Route Playground</div>
     <div class="playground-layout">
       <div class="playground-input">
-        <div class="section-title" style="font-size:13px;margin-bottom:12px">Request</div>
-        <div class="form-group">
-          <label>Model / Chain Name</label>
-          <input type="text" id="pg-model" placeholder="e.g. claude-sonnet, best-claude, auto" list="pg-model-list">
-          <datalist id="pg-model-list"></datalist>
+        <div class="section-title" style="font-size:13px;margin-bottom:16px">Select Target</div>
+
+        <div class="pg-target-tabs">
+          <div class="pg-target-tab active" data-type="model" onclick="pgSwitchTab('model')">Models</div>
+          <div class="pg-target-tab" data-type="chain" onclick="pgSwitchTab('chain')">Chains</div>
         </div>
-        <div class="form-group">
-          <label>Message</label>
+
+        <div id="pg-model-grid" class="pg-selector-grid"></div>
+        <div id="pg-chain-grid" class="pg-selector-grid" style="display:none"></div>
+
+        <input type="hidden" id="pg-model" value="">
+
+        <div class="form-group" style="margin-top:16px">
+          <label>Test Message</label>
           <input type="text" id="pg-message" value="Say hello in 5 words" placeholder="Test message...">
         </div>
+
         <button class="btn btn-primary" id="pg-send-btn" onclick="runPlayground()" style="width:100%;padding:10px;font-size:13px">
           ▶ Send Test Request
         </button>
+
         <div id="pg-response" style="margin-top:16px"></div>
       </div>
       <div class="playground-output">
         <div class="section-title" style="font-size:13px;margin-bottom:12px">Route Trace</div>
         <div id="pg-trace">
           <div style="color:var(--text-dim);text-align:center;padding:40px">
-            Send a request to see the routing trace
+            Select a model or chain and send a request
           </div>
         </div>
       </div>
@@ -1174,19 +1235,81 @@ async function loadChains() {
 }
 
 // ============ PLAYGROUND ============
+let pgSelected = null; // { type: "model"|"chain", name: "..." }
+
+function pgSwitchTab(type) {
+  document.querySelectorAll(".pg-target-tab").forEach(t => t.classList.toggle("active", t.dataset.type === type));
+  document.getElementById("pg-model-grid").style.display = type === "model" ? "" : "none";
+  document.getElementById("pg-chain-grid").style.display = type === "chain" ? "" : "none";
+}
+
+function pgSelect(type, name) {
+  pgSelected = { type, name };
+  document.getElementById("pg-model").value = name;
+  // Update selection UI
+  document.querySelectorAll(".pg-selector-item").forEach(el => {
+    el.classList.toggle("selected", el.dataset.type === type && el.dataset.name === name);
+  });
+}
+
 async function loadPlaygroundModels() {
   const models = await fetch(API+"/models").then(r=>r.json());
   const chains = await fetch(API+"/chains").then(r=>r.json());
-  const dl = document.getElementById("pg-model-list");
-  let opts = models.map(m => `<option value="${m.name}">${m.name} (model)</option>`);
-  opts = opts.concat(chains.filter(c=>c.enabled).map(c => `<option value="${c.name}">${c.name} (${c.mode} chain)</option>`));
-  dl.innerHTML = opts.join("");
+  const deployments = await fetch(API+"/deployments").then(r=>r.json());
+
+  // Models grid
+  const mg = document.getElementById("pg-model-grid");
+  if (!models.length) {
+    mg.innerHTML = '<div style="color:var(--text-dim);padding:20px;text-align:center;font-size:11px">No models configured</div>';
+  } else {
+    mg.innerHTML = models.map(m => {
+      const depCount = deployments.filter(d => d.modelId === m.id).length;
+      const providers = [...new Set(deployments.filter(d => d.modelId === m.id).map(d => d.providerName))];
+      const sel = pgSelected?.type === "model" && pgSelected?.name === m.name ? "selected" : "";
+      return `<div class="pg-selector-item ${sel}" data-type="model" data-name="${esc(m.name)}" onclick="pgSelect('model','${esc(m.name)}')">
+        <div class="pg-selector-icon pg-selector-icon-model">🎯</div>
+        <div class="pg-selector-info">
+          <div class="pg-selector-name">${esc(m.name)}</div>
+          <div class="pg-selector-meta">${depCount} deployment${depCount!==1?"s":""} · ${providers.join(", ") || "no providers"}</div>
+        </div>
+        <div class="pg-selector-check">✓</div>
+      </div>`;
+    }).join("");
+  }
+
+  // Chains grid
+  const cg = document.getElementById("pg-chain-grid");
+  const activeChains = chains.filter(c => c.enabled);
+  if (!activeChains.length) {
+    cg.innerHTML = '<div style="color:var(--text-dim);padding:20px;text-align:center;font-size:11px">No active chains</div>';
+  } else {
+    cg.innerHTML = activeChains.map(ch => {
+      let items = []; try { items = JSON.parse(ch.items); } catch {}
+      const iconClass = ch.mode === "provider" ? "pg-selector-icon-chain-provider" : "pg-selector-icon-chain-models";
+      const icon = ch.mode === "provider" ? "⛓" : "⛓";
+      let meta;
+      if (ch.mode === "models") {
+        meta = items.join(" → ");
+      } else {
+        meta = items.map(i => i.provider + "(" + (i.models||[]).length + ")").join(" → ");
+      }
+      const sel = pgSelected?.type === "chain" && pgSelected?.name === ch.name ? "selected" : "";
+      return `<div class="pg-selector-item ${sel}" data-type="chain" data-name="${esc(ch.name)}" onclick="pgSelect('chain','${esc(ch.name)}')">
+        <div class="pg-selector-icon ${iconClass}">${icon}</div>
+        <div class="pg-selector-info">
+          <div class="pg-selector-name">${esc(ch.name)} <span style="color:var(--text-dim);font-weight:400;font-size:10px">${ch.mode}</span></div>
+          <div class="pg-selector-meta" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(meta)}</div>
+        </div>
+        <div class="pg-selector-check">✓</div>
+      </div>`;
+    }).join("");
+  }
 }
 
 async function runPlayground() {
   const model = document.getElementById("pg-model").value;
   const message = document.getElementById("pg-message").value;
-  if (!model) { toast("Model name required", "error"); return; }
+  if (!model) { toast("Select a model or chain first", "error"); return; }
 
   const btn = document.getElementById("pg-send-btn");
   btn.textContent = "⏳ Routing...";
@@ -1212,12 +1335,9 @@ async function runPlayground() {
 
 function renderTrace(trace) {
   const traceEl = document.getElementById("pg-trace");
-  const respEl = document.getElementById("pg-response");
 
-  // Render steps
   const stepsHtml = trace.steps.map(s => {
     let dotClass, icon, actionLabel, detail;
-
     switch(s.action) {
       case "chain_match":
         dotClass = "trace-dot-chain"; icon = "⛓"; actionLabel = "Chain Matched";
@@ -1254,7 +1374,6 @@ function renderTrace(trace) {
         dotClass = "trace-dot-skip"; icon = "?"; actionLabel = s.action;
         detail = JSON.stringify(s);
     }
-
     return `<div class="trace-step">
       <div class="trace-dot ${dotClass}">${icon}</div>
       <div class="trace-content">
@@ -1264,14 +1383,13 @@ function renderTrace(trace) {
     </div>`;
   }).join("");
 
-  // Summary
-  const finalDep = trace.finalDeployment;
+  const fd = trace.finalDeployment;
   const summaryHtml = `<div class="trace-summary">
     <div class="trace-summary-row"><span class="trace-summary-label">Request Model</span><span class="trace-summary-value" style="color:var(--blue)">${esc(trace.requestModel)}</span></div>
     ${trace.chainName ? `<div class="trace-summary-row"><span class="trace-summary-label">Chain</span><span class="trace-summary-value" style="color:var(--purple)">${esc(trace.chainName)} (${trace.chainMode})</span></div>` : ""}
     <div class="trace-summary-row"><span class="trace-summary-label">Result</span><span class="trace-summary-value" style="color:${trace.success?"var(--green)":"var(--red)"}">${trace.success ? "✓ Success" : "✗ Failed"}</span></div>
-    ${finalDep ? `<div class="trace-summary-row"><span class="trace-summary-label">Final Provider</span><span class="trace-summary-value" style="color:var(--cyan)">${esc(finalDep.provider)}</span></div>
-    <div class="trace-summary-row"><span class="trace-summary-label">Final Model</span><span class="trace-summary-value" style="color:var(--green)">${esc(finalDep.model)}</span></div>` : ""}
+    ${fd ? `<div class="trace-summary-row"><span class="trace-summary-label">Final Provider</span><span class="trace-summary-value" style="color:var(--cyan)">${esc(fd.provider)}</span></div>
+    <div class="trace-summary-row"><span class="trace-summary-label">Final Model</span><span class="trace-summary-value" style="color:var(--green)">${esc(fd.model)}</span></div>` : ""}
     <div class="trace-summary-row"><span class="trace-summary-label">Total Latency</span><span class="trace-summary-value" style="color:var(--amber)">${trace.totalLatencyMs}ms</span></div>
     <div class="trace-summary-row"><span class="trace-summary-label">Steps</span><span class="trace-summary-value">${trace.steps.length}</span></div>
   </div>`;
