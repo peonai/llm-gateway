@@ -817,7 +817,7 @@ function openProviderModal(p) {
 
 async function saveProvider() {
   const id = document.getElementById('provider-edit-id').value;
-  const data = { name: document.getElementById('provider-name').value, baseUrl: document.getElementById('provider-url').value, apiKey: document.getElementById('provider-key').value, apiType: document.getElementById('provider-type').value };
+  const data = { name: document.getElementById('provider-name').value, baseUrl: document.getElementById('provider-url').value, apiKey: document.getElementById('provider-key').value, apiType: document.getElementById('provider-type').value, tags: document.getElementById('prov-tags').value };
   if (!data.name || !data.baseUrl) { toast('Name and URL required','error'); return; }
   await fetch(id ? API+'/providers/'+id : API+'/providers', { method: id?'PUT':'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data) });
   closeModal('provider-modal'); toast(id ? 'Provider updated' : 'Provider added'); loadProviders(); loadModels(); loadChains();
