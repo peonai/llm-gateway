@@ -348,6 +348,58 @@ body {
   padding: 12px; margin-top: 12px; font-size: 12px; max-height: 200px; overflow-y: auto;
   white-space: pre-wrap; word-break: break-word;
 }
+
+/* Chain Builder */
+.chain-builder { min-height: 60px; }
+.chain-builder-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; background: var(--bg-input);
+  border: 1px solid var(--border); border-radius: 6px;
+  margin-bottom: 6px; cursor: grab; transition: all 0.15s;
+  user-select: none;
+}
+.chain-builder-item:active { cursor: grabbing; }
+.chain-builder-item.dragging { opacity: 0.4; border-color: var(--green); }
+.chain-builder-item.drag-over { border-color: var(--green); box-shadow: 0 0 8px rgba(0,255,136,0.2); }
+.chain-builder-item.disabled { opacity: 0.4; }
+.chain-builder-handle { color: var(--text-muted); font-size: 14px; cursor: grab; }
+.chain-builder-order { color: var(--text-dim); font-weight: 700; font-size: 11px; min-width: 20px; text-align: center; }
+.chain-builder-name { flex: 1; font-size: 12px; font-weight: 500; }
+.chain-builder-meta { font-size: 10px; color: var(--text-dim); }
+.chain-builder-toggle {
+  width: 28px; height: 16px; border-radius: 8px; position: relative;
+  cursor: pointer; transition: background 0.2s; flex-shrink: 0;
+}
+.chain-builder-toggle.on { background: var(--green); }
+.chain-builder-toggle.off { background: var(--text-muted); }
+.chain-builder-toggle::after {
+  content: ""; position: absolute; width: 12px; height: 12px;
+  border-radius: 50%; background: white; top: 2px; left: 2px;
+  transition: transform 0.2s;
+}
+.chain-builder-toggle.on::after { transform: translateX(12px); }
+/* Provider sub-items */
+.chain-builder-provider { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+.chain-builder-provider-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; cursor: grab; user-select: none;
+  border-bottom: 1px solid var(--border);
+}
+.chain-builder-provider-header.dragging { opacity: 0.4; }
+.chain-builder-provider-header.drag-over { border-color: var(--green); }
+.chain-builder-provider.disabled { opacity: 0.4; }
+.chain-builder-sub-list { padding: 4px 8px 8px 36px; }
+.chain-builder-sub-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; background: var(--bg-input);
+  border: 1px solid transparent; border-radius: 5px;
+  margin-bottom: 4px; cursor: grab; font-size: 11px;
+  user-select: none; transition: all 0.15s;
+}
+.chain-builder-sub-item:active { cursor: grabbing; }
+.chain-builder-sub-item.dragging { opacity: 0.4; border-color: var(--amber); }
+.chain-builder-sub-item.drag-over { border-color: var(--amber); }
+.chain-builder-sub-item.disabled { opacity: 0.4; }
 </style>
 </head>
 <body>
@@ -553,28 +605,27 @@ body {
 
 <!-- CHAIN MODAL -->
 <div class="modal-overlay" id="chain-modal">
-  <div class="modal" style="width:560px">
+  <div class="modal" style="width:620px;max-height:90vh">
     <div class="modal-title" id="chain-modal-title">Create Fallback Chain</div>
     <input type="hidden" id="chain-edit-id">
     <div class="form-group">
-      <label>Chain Name (use this as model name in requests)</label>
+      <label>Chain Name (clients use this as model name)</label>
       <input type="text" id="chain-name" placeholder="e.g. best-claude, auto, smart-route">
-      <div class="form-hint">Clients send <code style="color:var(--green)">model: "your-chain-name"</code> to use this chain</div>
+      <div class="form-hint">Clients send <code style="color:var(--green)">model: "your-chain-name"</code> to activate this chain</div>
     </div>
     <div class="form-group">
       <label>Mode</label>
-      <select id="chain-mode" onchange="updateChainItemsHint()">
-        <option value="models">MODELS — model-level fallback chain</option>
-        <option value="provider">PROVIDER — provider × model priority matrix</option>
+      <select id="chain-mode" onchange="rebuildChainBuilder()">
+        <option value="models">MODELS — model-level fallback</option>
+        <option value="provider">PROVIDER — provider × model matrix</option>
       </select>
     </div>
     <div class="form-group">
-      <label id="chain-items-label">Items (JSON)</label>
-      <textarea id="chain-items" placeholder=""></textarea>
-      <div class="form-hint" id="chain-items-hint"></div>
+      <label>Fallback Priority <span style="color:var(--text-muted);font-weight:400">(drag to reorder, toggle to enable/disable)</span></label>
+      <div id="chain-builder" class="chain-builder"></div>
     </div>
     <div class="modal-actions">
-      <button class="btn" onclick="closeModal('chain-modal')">Cancel</button>
+      <button class="btn" onclick="closeModal(\x27chain-modal\x27)">Cancel</button>
       <button class="btn btn-primary" onclick="saveChain()">Save</button>
     </div>
   </div>
@@ -830,40 +881,264 @@ function toggleAutoRefresh() {
 
 
 // ============ CHAINS ============
+let chainBuilderData = []; // current builder state
+let allModelsCache = [];
+let allProvidersCache = [];
+let allDeploymentsCache = [];
+
+async function refreshChainData() {
+  allModelsCache = await fetch(API+"/models").then(r=>r.json());
+  allProvidersCache = await fetch(API+"/providers").then(r=>r.json());
+  allDeploymentsCache = await fetch(API+"/deployments").then(r=>r.json());
+}
+
 function openChainModal(ch) {
   document.getElementById("chain-edit-id").value = ch?.id || "";
   document.getElementById("chain-name").value = ch?.name || "";
   document.getElementById("chain-mode").value = ch?.mode || "models";
-  if (ch?.items) {
-    try { document.getElementById("chain-items").value = JSON.stringify(JSON.parse(ch.items), null, 2); }
-    catch { document.getElementById("chain-items").value = ch.items; }
-  } else { document.getElementById("chain-items").value = ""; }
   document.getElementById("chain-modal-title").textContent = ch ? "Edit Chain" : "Create Fallback Chain";
-  updateChainItemsHint();
+
+  refreshChainData().then(() => {
+    if (ch?.items) {
+      try {
+        const items = JSON.parse(ch.items);
+        initBuilderFromItems(ch.mode, items);
+      } catch { rebuildChainBuilder(); }
+    } else {
+      rebuildChainBuilder();
+    }
+  });
+
   document.getElementById("chain-modal").classList.add("open");
 }
 
-function updateChainItemsHint() {
+function rebuildChainBuilder() {
   const mode = document.getElementById("chain-mode").value;
-  const hint = document.getElementById("chain-items-hint");
-  const ta = document.getElementById("chain-items");
-  if (mode === "models") {
-    hint.innerHTML = 'Array of model names in priority order.<br><code style="color:var(--green);font-size:10px">["claude-opus-4-6", "claude-opus-4-5", "claude-sonnet-4-6"]</code>';
-    if (!ta.value) ta.value = JSON.stringify(["claude-opus-4-6", "claude-opus-4-5", "claude-sonnet-4-6"], null, 2);
+  if (mode === "models") buildModelsBuilder();
+  else buildProviderBuilder();
+}
+
+// --- MODELS mode builder ---
+function buildModelsBuilder(activeItems) {
+  const container = document.getElementById("chain-builder");
+  // If activeItems provided, use that order; otherwise use all models
+  let items;
+  if (activeItems) {
+    // activeItems = ["model1", "model2", ...] — ordered, enabled ones
+    const activeSet = new Set(activeItems);
+    items = activeItems.map(name => ({ name, enabled: true }));
+    // Add remaining models as disabled
+    allModelsCache.forEach(m => {
+      if (!activeSet.has(m.name)) items.push({ name: m.name, enabled: false });
+    });
   } else {
-    hint.innerHTML = 'Array of {provider, models} objects.<br><code style="color:var(--green);font-size:10px">[{"provider":"foxcode-aws","models":["claude-opus-4-6"]}]</code>';
-    if (!ta.value) ta.value = JSON.stringify([{"provider":"foxcode-aws","models":["claude-opus-4-6","claude-opus-4-5"]},{"provider":"packy-aws","models":["claude-opus-4-6"]}], null, 2);
+    items = allModelsCache.map(m => ({ name: m.name, enabled: true }));
+  }
+  chainBuilderData = items;
+  renderModelsBuilder();
+}
+
+function renderModelsBuilder() {
+  const container = document.getElementById("chain-builder");
+  const enabledCount = chainBuilderData.filter(i => i.enabled).length;
+  let orderNum = 0;
+  container.innerHTML = chainBuilderData.map((item, idx) => {
+    if (item.enabled) orderNum++;
+    const depCount = allDeploymentsCache.filter(d => {
+      const model = allModelsCache.find(m => m.name === item.name);
+      return model && d.modelId === model.id;
+    }).length;
+    return `<div class="chain-builder-item ${item.enabled?"":"disabled"}" draggable="true"
+      data-idx="${idx}" ondragstart="cbDragStart(event)" ondragover="cbDragOver(event)"
+      ondragleave="cbDragLeave(event)" ondrop="cbDrop(event)" ondragend="cbDragEnd(event)">
+      <span class="chain-builder-handle">⠿</span>
+      <span class="chain-builder-order">${item.enabled ? orderNum : "—"}</span>
+      <span class="chain-builder-name" style="color:${item.enabled?"var(--purple)":"var(--text-dim)"}">${esc(item.name)}</span>
+      <span class="chain-builder-meta">${depCount} deployment${depCount!==1?"s":""}</span>
+      <div class="chain-builder-toggle ${item.enabled?"on":"off"}" onclick="cbToggle(${idx})"></div>
+    </div>`;
+  }).join("");
+}
+
+// --- PROVIDER mode builder ---
+function buildProviderBuilder(activeItems) {
+  const container = document.getElementById("chain-builder");
+  let items;
+  if (activeItems) {
+    // activeItems = [{provider:"name", models:["m1","m2"], enabled:true}, ...]
+    const activeProviders = new Set(activeItems.map(i => i.provider));
+    items = activeItems.map(ai => ({
+      provider: ai.provider,
+      enabled: ai.enabled !== false,
+      models: ai.models.map(mn => ({ name: mn, enabled: true })),
+    }));
+    // Add remaining providers
+    allProvidersCache.forEach(p => {
+      if (!activeProviders.has(p.name)) {
+        const providerModels = getModelsForProvider(p.id);
+        items.push({ provider: p.name, enabled: false, models: providerModels.map(m => ({ name: m, enabled: true })) });
+      }
+    });
+    // For each active provider, add missing models as disabled
+    items.forEach(item => {
+      const p = allProvidersCache.find(pp => pp.name === item.provider);
+      if (!p) return;
+      const providerModels = getModelsForProvider(p.id);
+      const activeModelNames = new Set(item.models.map(m => m.name));
+      providerModels.forEach(mn => {
+        if (!activeModelNames.has(mn)) item.models.push({ name: mn, enabled: false });
+      });
+    });
+  } else {
+    items = allProvidersCache.map(p => {
+      const providerModels = getModelsForProvider(p.id);
+      return { provider: p.name, enabled: true, models: providerModels.map(m => ({ name: m, enabled: true })) };
+    });
+  }
+  chainBuilderData = items;
+  renderProviderBuilder();
+}
+
+function getModelsForProvider(providerId) {
+  const modelIds = new Set(allDeploymentsCache.filter(d => d.providerId === providerId).map(d => d.modelId));
+  return allModelsCache.filter(m => modelIds.has(m.id)).map(m => m.name);
+}
+
+function renderProviderBuilder() {
+  const container = document.getElementById("chain-builder");
+  let orderNum = 0;
+  container.innerHTML = chainBuilderData.map((item, pIdx) => {
+    if (item.enabled) orderNum++;
+    let subOrderNum = 0;
+    const subHtml = item.models.map((m, mIdx) => {
+      if (m.enabled) subOrderNum++;
+      return `<div class="chain-builder-sub-item ${m.enabled?"":"disabled"}" draggable="true"
+        data-pidx="${pIdx}" data-midx="${mIdx}" ondragstart="cbSubDragStart(event)"
+        ondragover="cbSubDragOver(event)" ondragleave="cbSubDragLeave(event)"
+        ondrop="cbSubDrop(event)" ondragend="cbSubDragEnd(event)">
+        <span class="chain-builder-handle" style="font-size:11px">⠿</span>
+        <span class="chain-builder-order" style="font-size:10px">${m.enabled ? subOrderNum : "—"}</span>
+        <span style="flex:1;color:${m.enabled?"var(--green)":"var(--text-dim)"}">${esc(m.name)}</span>
+        <div class="chain-builder-toggle ${m.enabled?"on":"off"}" style="width:24px;height:14px"
+          onclick="cbSubToggle(${pIdx},${mIdx})"></div>
+      </div>`;
+    }).join("");
+
+    return `<div class="chain-builder-provider ${item.enabled?"":"disabled"}">
+      <div class="chain-builder-provider-header" draggable="true" data-pidx="${pIdx}"
+        ondragstart="cbProvDragStart(event)" ondragover="cbProvDragOver(event)"
+        ondragleave="cbProvDragLeave(event)" ondrop="cbProvDrop(event)" ondragend="cbProvDragEnd(event)">
+        <span class="chain-builder-handle">⠿</span>
+        <span class="chain-builder-order">${item.enabled ? orderNum : "—"}</span>
+        <span class="chain-builder-name" style="color:${item.enabled?"var(--cyan)":"var(--text-dim)"}">${esc(item.provider)}</span>
+        <span class="chain-builder-meta">${item.models.filter(m=>m.enabled).length} model${item.models.filter(m=>m.enabled).length!==1?"s":""}</span>
+        <div class="chain-builder-toggle ${item.enabled?"on":"off"}" onclick="cbProvToggle(${pIdx})"></div>
+      </div>
+      <div class="chain-builder-sub-list">${subHtml || '<div style="color:var(--text-muted);font-size:10px;padding:4px">No models deployed to this provider</div>'}</div>
+    </div>`;
+  }).join("");
+}
+
+// --- Init builder from saved items ---
+function initBuilderFromItems(mode, items) {
+  if (mode === "models") {
+    buildModelsBuilder(items);
+  } else {
+    buildProviderBuilder(items);
   }
 }
 
+// --- Drag & drop for MODELS mode ---
+let cbDragIdx = null;
+function cbDragStart(e) { cbDragIdx = parseInt(e.target.dataset.idx); e.target.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; }
+function cbDragOver(e) { e.preventDefault(); e.currentTarget.classList.add("drag-over"); }
+function cbDragLeave(e) { e.currentTarget.classList.remove("drag-over"); }
+function cbDragEnd(e) { e.target.classList.remove("dragging"); document.querySelectorAll(".drag-over").forEach(el => el.classList.remove("drag-over")); }
+function cbDrop(e) {
+  e.preventDefault(); e.currentTarget.classList.remove("drag-over");
+  const targetIdx = parseInt(e.currentTarget.dataset.idx);
+  if (cbDragIdx === null || cbDragIdx === targetIdx) return;
+  const item = chainBuilderData.splice(cbDragIdx, 1)[0];
+  chainBuilderData.splice(targetIdx, 0, item);
+  renderModelsBuilder();
+}
+function cbToggle(idx) {
+  chainBuilderData[idx].enabled = !chainBuilderData[idx].enabled;
+  renderModelsBuilder();
+}
+
+// --- Drag & drop for PROVIDER mode (provider level) ---
+let cbProvDragIdx = null;
+function cbProvDragStart(e) { cbProvDragIdx = parseInt(e.target.dataset.pidx); e.target.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("type","provider"); }
+function cbProvDragOver(e) { e.preventDefault(); e.currentTarget.classList.add("drag-over"); }
+function cbProvDragLeave(e) { e.currentTarget.classList.remove("drag-over"); }
+function cbProvDragEnd(e) { e.target.classList.remove("dragging"); document.querySelectorAll(".drag-over").forEach(el => el.classList.remove("drag-over")); }
+function cbProvDrop(e) {
+  e.preventDefault(); e.currentTarget.classList.remove("drag-over");
+  if (e.dataTransfer.getData("type") !== "provider") return;
+  const targetIdx = parseInt(e.currentTarget.dataset.pidx);
+  if (cbProvDragIdx === null || cbProvDragIdx === targetIdx) return;
+  const item = chainBuilderData.splice(cbProvDragIdx, 1)[0];
+  chainBuilderData.splice(targetIdx, 0, item);
+  renderProviderBuilder();
+}
+function cbProvToggle(pIdx) {
+  chainBuilderData[pIdx].enabled = !chainBuilderData[pIdx].enabled;
+  renderProviderBuilder();
+}
+
+// --- Drag & drop for PROVIDER mode (sub-model level) ---
+let cbSubDragInfo = null;
+function cbSubDragStart(e) {
+  cbSubDragInfo = { pIdx: parseInt(e.target.dataset.pidx), mIdx: parseInt(e.target.dataset.midx) };
+  e.target.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("type","sub");
+}
+function cbSubDragOver(e) { e.preventDefault(); e.currentTarget.classList.add("drag-over"); }
+function cbSubDragLeave(e) { e.currentTarget.classList.remove("drag-over"); }
+function cbSubDragEnd(e) { e.target.classList.remove("dragging"); document.querySelectorAll(".drag-over").forEach(el => el.classList.remove("drag-over")); }
+function cbSubDrop(e) {
+  e.preventDefault(); e.currentTarget.classList.remove("drag-over");
+  if (e.dataTransfer.getData("type") !== "sub") return;
+  const targetPIdx = parseInt(e.currentTarget.dataset.pidx);
+  const targetMIdx = parseInt(e.currentTarget.dataset.midx);
+  if (!cbSubDragInfo || cbSubDragInfo.pIdx !== targetPIdx) return; // only reorder within same provider
+  const src = cbSubDragInfo.mIdx;
+  if (src === targetMIdx) return;
+  const models = chainBuilderData[targetPIdx].models;
+  const item = models.splice(src, 1)[0];
+  models.splice(targetMIdx, 0, item);
+  renderProviderBuilder();
+}
+function cbSubToggle(pIdx, mIdx) {
+  chainBuilderData[pIdx].models[mIdx].enabled = !chainBuilderData[pIdx].models[mIdx].enabled;
+  renderProviderBuilder();
+}
+
+// --- Save chain (extract from builder) ---
 async function saveChain() {
   const id = document.getElementById("chain-edit-id").value;
+  const mode = document.getElementById("chain-mode").value;
+  const name = document.getElementById("chain-name").value;
+  if (!name) { toast("Name required","error"); return; }
+
   let items;
-  try { items = JSON.parse(document.getElementById("chain-items").value); }
-  catch(e) { toast("Invalid JSON: "+e.message,"error"); return; }
-  const data = { name: document.getElementById("chain-name").value, mode: document.getElementById("chain-mode").value, items };
-  if (!data.name) { toast("Name required","error"); return; }
-  await fetch(id ? API+"/chains/"+id : API+"/chains", { method: id?"PUT":"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(data) });
+  if (mode === "models") {
+    items = chainBuilderData.filter(i => i.enabled).map(i => i.name);
+  } else {
+    items = chainBuilderData.filter(i => i.enabled).map(i => ({
+      provider: i.provider,
+      models: i.models.filter(m => m.enabled).map(m => m.name),
+    })).filter(i => i.models.length > 0);
+  }
+
+  if (items.length === 0) { toast("Enable at least one item","error"); return; }
+
+  const data = { name, mode, items };
+  await fetch(id ? API+"/chains/"+id : API+"/chains", {
+    method: id?"PUT":"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(data)
+  });
   closeModal("chain-modal"); toast(id ? "Chain updated" : "Chain created"); loadChains();
 }
 
@@ -884,20 +1159,19 @@ async function loadChains() {
     } else if (ch.mode === "provider") {
       itemsHtml = items.map((it,i) => `<div class="chain-item"><span class="chain-item-order">${i+1}</span><span class="chain-item-name" style="color:var(--cyan)">${esc(it.provider)}</span><span class="chain-item-sub">${(it.models||[]).join(", ")}</span></div>`).join("");
     }
+    const chJson = JSON.stringify(ch).replace(/'/g,"&#39;").replace(/"/g,"&quot;");
     return `<div class="card">
       <div class="card-header"><div><div class="card-title">${esc(ch.name)}</div></div><div style="display:flex;gap:6px"><span class="chain-mode-badge ${modeClass}">${ch.mode}</span>${stBadge}</div></div>
       <div class="chain-items">${itemsHtml}</div>
       <div class="chain-usage">Use as: <code>model: "${esc(ch.name)}"</code></div>
       <div class="card-actions">
         <button class="btn btn-sm" onclick="toggleChain('${ch.id}',${ch.enabled})">${ch.enabled?'Disable':'Enable'}</button>
-        <button class="btn btn-sm" onclick='openChainModal(${JSON.stringify(ch)})'>Edit</button>
+        <button class="btn btn-sm" onclick='openChainModal(JSON.parse(this.dataset.ch))' data-ch='${chJson}'>Edit</button>
         <button class="btn btn-sm btn-danger" onclick="deleteChain('${ch.id}','${esc(ch.name)}')">Delete</button>
       </div>
     </div>`;
   }).join("");
 }
-
-
 
 // ============ PLAYGROUND ============
 async function loadPlaygroundModels() {
