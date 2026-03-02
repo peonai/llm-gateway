@@ -66,10 +66,33 @@ export function getCooldownInfo() {
   return info;
 }
 
-async function forwardRequest(deployment: Deployment, path: string, method: string, headers: Headers, body: any): Promise<Response> {
-  const url = `${deployment.baseUrl.replace(/\/$/, "")}${path}`;
+async function forwardRequest(deployment: Deployment, inboundPath: string, method: string, headers: Headers, body: any): Promise<Response> {
+  // Determine the correct outbound path based on provider type
+  // If inbound is OpenAI format but provider is Anthropic (or vice versa), convert
+  const isInboundOpenAI = inboundPath.includes("/chat/completions");
+  const isProviderAnthropic = deployment.apiType === "anthropic";
+
+  let outPath: string;
+  let requestBody: any;
+
+  if (isInboundOpenAI && isProviderAnthropic) {
+    // OpenAI -> Anthropic: convert format
+    outPath = "/v1/messages";
+    requestBody = convertOpenAIToAnthropic(body, deployment.modelName);
+  } else if (!isInboundOpenAI && !isProviderAnthropic) {
+    // Anthropic -> OpenAI: convert format
+    outPath = "/v1/chat/completions";
+    requestBody = convertAnthropicToOpenAI(body, deployment.modelName);
+  } else {
+    // Same protocol, pass through
+    outPath = isProviderAnthropic ? "/v1/messages" : "/v1/chat/completions";
+    requestBody = { ...body, model: deployment.modelName };
+  }
+
+  const url = `${deployment.baseUrl.replace(/\/$/, "")}${outPath}`;
   const outHeaders: Record<string, string> = { "Content-Type": "application/json" };
-  if (deployment.apiType === "anthropic") {
+
+  if (isProviderAnthropic) {
     outHeaders["x-api-key"] = deployment.apiKey;
     outHeaders["anthropic-version"] = headers.get("anthropic-version") || "2023-06-01";
     const beta = headers.get("anthropic-beta");
@@ -77,7 +100,7 @@ async function forwardRequest(deployment: Deployment, path: string, method: stri
   } else {
     outHeaders["Authorization"] = `Bearer ${deployment.apiKey}`;
   }
-  const requestBody = { ...body, model: deployment.modelName };
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), deployment.timeout * 1000);
   try {
@@ -88,6 +111,45 @@ async function forwardRequest(deployment: Deployment, path: string, method: stri
     clearTimeout(timeoutId);
     throw err.name === "AbortError" ? new Error(`Timeout after ${deployment.timeout}s`) : err;
   }
+}
+
+// --- Protocol converters ---
+function convertOpenAIToAnthropic(body: any, modelName: string): any {
+  const messages = (body.messages || []).map((m: any) => ({
+    role: m.role === "system" ? "user" : m.role,
+    content: m.content,
+  }));
+  // Extract system message
+  const systemMsg = (body.messages || []).find((m: any) => m.role === "system");
+  const result: any = {
+    model: modelName,
+    messages: messages.filter((m: any) => m.role !== "system" || !systemMsg),
+    max_tokens: body.max_tokens || body.max_completion_tokens || 4096,
+  };
+  if (systemMsg) result.system = systemMsg.content;
+  if (body.stream) result.stream = true;
+  if (body.temperature !== undefined) result.temperature = body.temperature;
+  if (body.top_p !== undefined) result.top_p = body.top_p;
+  return result;
+}
+
+function convertAnthropicToOpenAI(body: any, modelName: string): any {
+  const messages: any[] = [];
+  if (body.system) {
+    messages.push({ role: "system", content: body.system });
+  }
+  (body.messages || []).forEach((m: any) => {
+    messages.push({ role: m.role, content: typeof m.content === "string" ? m.content : JSON.stringify(m.content) });
+  });
+  const result: any = {
+    model: modelName,
+    messages,
+    max_tokens: body.max_tokens || 4096,
+  };
+  if (body.stream) result.stream = true;
+  if (body.temperature !== undefined) result.temperature = body.temperature;
+  if (body.top_p !== undefined) result.top_p = body.top_p;
+  return result;
 }
 
 async function tryDeployment(

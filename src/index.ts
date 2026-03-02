@@ -8,8 +8,8 @@ getDb();
 
 console.log(`
 ╔══════════════════════════════════════╗
-║        LLM Gateway v0.1.0           ║
-║   http://localhost:${PORT}/ui          ║
+║        LLM Gateway v1.0.0            ║
+║   http://localhost:${PORT}/ui        ║
 ╚══════════════════════════════════════╝
 `);
 
