@@ -306,3 +306,55 @@ export function getModelTimeline(hours: number = 24) {
     ORDER BY hour
   `).all(since);
 }
+
+// --- Fallback Chains ---
+export function initChainSchema() {
+  getDb().exec(`
+    CREATE TABLE IF NOT EXISTS fallback_chains (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      mode TEXT NOT NULL DEFAULT 'model',
+      items TEXT NOT NULL DEFAULT '[]',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      createdAt INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+    );
+  `);
+}
+
+export function listChains() {
+  initChainSchema();
+  return getDb().query("SELECT * FROM fallback_chains ORDER BY name").all();
+}
+
+export function getChain(id: string) {
+  initChainSchema();
+  return getDb().query("SELECT * FROM fallback_chains WHERE id = ?").get(id);
+}
+
+export function getChainByName(name: string) {
+  initChainSchema();
+  return getDb().query("SELECT * FROM fallback_chains WHERE name = ? AND enabled = 1").get(name);
+}
+
+export function createChain(p: { name: string; mode: string; items: string }) {
+  initChainSchema();
+  const id = uuid();
+  getDb().query("INSERT INTO fallback_chains (id, name, mode, items) VALUES (?, ?, ?, ?)").run(id, p.name, p.mode, p.items);
+  return getChain(id);
+}
+
+export function updateChain(id: string, p: { name?: string; mode?: string; items?: string; enabled?: number }) {
+  initChainSchema();
+  const existing: any = getChain(id);
+  if (!existing) return null;
+  getDb().query("UPDATE fallback_chains SET name=?, mode=?, items=?, enabled=? WHERE id=?").run(
+    p.name ?? existing.name, p.mode ?? existing.mode, p.items ?? existing.items,
+    p.enabled !== undefined ? p.enabled : existing.enabled, id
+  );
+  return getChain(id);
+}
+
+export function deleteChain(id: string) {
+  initChainSchema();
+  getDb().query("DELETE FROM fallback_chains WHERE id = ?").run(id);
+}

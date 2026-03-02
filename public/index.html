@@ -291,6 +291,20 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+/* Chain builder */
+.chain-mode-badge { font-size: 10px; padding: 2px 10px; border-radius: 10px; font-weight: 600; text-transform: uppercase; }
+.chain-mode-model { background: rgba(68,136,255,0.15); color: var(--blue); }
+.chain-mode-models { background: rgba(170,102,255,0.15); color: var(--purple); }
+.chain-mode-provider { background: rgba(0,204,255,0.15); color: var(--cyan); }
+.chain-items { margin-top: 12px; }
+.chain-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg-input); border-radius: 6px; margin-bottom: 4px; font-size: 11px; }
+.chain-item-order { color: var(--text-dim); font-weight: 600; min-width: 16px; }
+.chain-item-name { flex: 1; }
+.chain-item-sub { color: var(--text-dim); font-size: 10px; }
+.chain-usage { font-size: 11px; color: var(--text-dim); margin-top: 8px; padding: 8px 10px; background: var(--bg-input); border-radius: 6px; font-style: italic; }
+.chain-usage code { color: var(--green); font-style: normal; }
+.form-group textarea { width: 100%; padding: 8px 12px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: var(--font); font-size: 12px; outline: none; min-height: 120px; resize: vertical; transition: border-color 0.2s; }
+.form-group textarea:focus { border-color: var(--green); }
 </style>
 </head>
 <body>
@@ -301,6 +315,7 @@ body {
     <div class="nav-tab active" data-page="dashboard">Dashboard</div>
     <div class="nav-tab" data-page="providers">Providers</div>
     <div class="nav-tab" data-page="models">Models</div>
+    <div class="nav-tab" data-page="chains">Chains</div>
     <div class="nav-tab" data-page="keys">API Keys</div>
     <div class="nav-tab" data-page="logs">Logs</div>
   </div>
@@ -351,6 +366,19 @@ body {
       <button class="btn btn-primary" onclick="openModelModal()">+ Add Model</button>
     </div>
     <div class="card-grid" id="model-grid"></div>
+  </div>
+
+  <!-- CHAINS -->
+  <div class="page" id="page-chains">
+    <div class="section-header">
+      <div class="section-title">Fallback Chains</div>
+      <button class="btn btn-primary" onclick="openChainModal()">+ Create Chain</button>
+    </div>
+    <div style="color:var(--text-dim);font-size:11px;margin-bottom:16px">
+      Chains define fallback strategies. Use a chain name as the <code style="color:var(--green)">model</code> in your request to activate it.<br>
+      <strong>MODEL</strong> — exact match (default) · <strong>MODELS</strong> — model-level fallback · <strong>PROVIDER</strong> — provider × model priority matrix
+    </div>
+    <div class="card-grid" id="chain-grid"></div>
   </div>
 
   <!-- API KEYS -->
@@ -447,6 +475,34 @@ body {
   </div>
 </div>
 
+<!-- CHAIN MODAL -->
+<div class="modal-overlay" id="chain-modal">
+  <div class="modal" style="width:560px">
+    <div class="modal-title" id="chain-modal-title">Create Fallback Chain</div>
+    <input type="hidden" id="chain-edit-id">
+    <div class="form-group">
+      <label>Chain Name (use this as model name in requests)</label>
+      <input type="text" id="chain-name" placeholder="e.g. best-claude, auto, smart-route">
+      <div class="form-hint">Clients send <code style="color:var(--green)">model: "your-chain-name"</code> to use this chain</div>
+    </div>
+    <div class="form-group">
+      <label>Mode</label>
+      <select id="chain-mode" onchange="updateChainItemsHint()">
+        <option value="models">MODELS — model-level fallback chain</option>
+        <option value="provider">PROVIDER — provider × model priority matrix</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label id="chain-items-label">Items (JSON)</label>
+      <textarea id="chain-items" placeholder=""></textarea>
+      <div class="form-hint" id="chain-items-hint"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('chain-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveChain()">Save</button>
+    </div>
+  </div>
+</div>
 <script>
 const API = '/api';
 let autoRefresh = true;
@@ -461,6 +517,7 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
     document.getElementById('page-' + tab.dataset.page).classList.add('active');
     if (tab.dataset.page === 'logs') loadLogs();
     if (tab.dataset.page === 'keys') loadKeys();
+    if (tab.dataset.page === 'chains') loadChains();
   });
 });
 
@@ -694,8 +751,78 @@ function toggleAutoRefresh() {
   document.getElementById('auto-refresh').classList.toggle('on', autoRefresh);
 }
 
+
+// ============ CHAINS ============
+function openChainModal(ch) {
+  document.getElementById("chain-edit-id").value = ch?.id || "";
+  document.getElementById("chain-name").value = ch?.name || "";
+  document.getElementById("chain-mode").value = ch?.mode || "models";
+  if (ch?.items) {
+    try { document.getElementById("chain-items").value = JSON.stringify(JSON.parse(ch.items), null, 2); }
+    catch { document.getElementById("chain-items").value = ch.items; }
+  } else { document.getElementById("chain-items").value = ""; }
+  document.getElementById("chain-modal-title").textContent = ch ? "Edit Chain" : "Create Fallback Chain";
+  updateChainItemsHint();
+  document.getElementById("chain-modal").classList.add("open");
+}
+
+function updateChainItemsHint() {
+  const mode = document.getElementById("chain-mode").value;
+  const hint = document.getElementById("chain-items-hint");
+  const ta = document.getElementById("chain-items");
+  if (mode === "models") {
+    hint.innerHTML = 'Array of model names in priority order.<br><code style="color:var(--green);font-size:10px">["claude-opus-4-6", "claude-opus-4-5", "claude-sonnet-4-6"]</code>';
+    if (!ta.value) ta.value = JSON.stringify(["claude-opus-4-6", "claude-opus-4-5", "claude-sonnet-4-6"], null, 2);
+  } else {
+    hint.innerHTML = 'Array of {provider, models} objects.<br><code style="color:var(--green);font-size:10px">[{"provider":"foxcode-aws","models":["claude-opus-4-6"]}]</code>';
+    if (!ta.value) ta.value = JSON.stringify([{"provider":"foxcode-aws","models":["claude-opus-4-6","claude-opus-4-5"]},{"provider":"packy-aws","models":["claude-opus-4-6"]}], null, 2);
+  }
+}
+
+async function saveChain() {
+  const id = document.getElementById("chain-edit-id").value;
+  let items;
+  try { items = JSON.parse(document.getElementById("chain-items").value); }
+  catch(e) { toast("Invalid JSON: "+e.message,"error"); return; }
+  const data = { name: document.getElementById("chain-name").value, mode: document.getElementById("chain-mode").value, items };
+  if (!data.name) { toast("Name required","error"); return; }
+  await fetch(id ? API+"/chains/"+id : API+"/chains", { method: id?"PUT":"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(data) });
+  closeModal("chain-modal"); toast(id ? "Chain updated" : "Chain created"); loadChains();
+}
+
+async function deleteChain(id,name) { if(!confirm('Delete chain "'+name+'"?')) return; await fetch(API+"/chains/"+id,{method:"DELETE"}); toast("Deleted"); loadChains(); }
+async function toggleChain(id,en) { await fetch(API+"/chains/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:en?0:1})}); loadChains(); }
+
+async function loadChains() {
+  const chains = await fetch(API+"/chains").then(r=>r.json());
+  const g = document.getElementById("chain-grid");
+  if (!chains.length) { g.innerHTML = '<div style="color:var(--text-dim);padding:40px;text-align:center">No chains configured. Requests use direct model matching.</div>'; return; }
+  g.innerHTML = chains.map(ch => {
+    let items = []; try { items = JSON.parse(ch.items); } catch {}
+    const modeClass = "chain-mode-"+ch.mode;
+    const stBadge = ch.enabled ? '<span class="card-badge badge-healthy">active</span>' : '<span class="card-badge badge-offline">disabled</span>';
+    let itemsHtml = "";
+    if (ch.mode === "models") {
+      itemsHtml = items.map((m,i) => `<div class="chain-item"><span class="chain-item-order">${i+1}</span><span class="chain-item-name" style="color:var(--purple)">${esc(m)}</span></div>`).join("");
+    } else if (ch.mode === "provider") {
+      itemsHtml = items.map((it,i) => `<div class="chain-item"><span class="chain-item-order">${i+1}</span><span class="chain-item-name" style="color:var(--cyan)">${esc(it.provider)}</span><span class="chain-item-sub">${(it.models||[]).join(", ")}</span></div>`).join("");
+    }
+    return `<div class="card">
+      <div class="card-header"><div><div class="card-title">${esc(ch.name)}</div></div><div style="display:flex;gap:6px"><span class="chain-mode-badge ${modeClass}">${ch.mode}</span>${stBadge}</div></div>
+      <div class="chain-items">${itemsHtml}</div>
+      <div class="chain-usage">Use as: <code>model: "${esc(ch.name)}"</code></div>
+      <div class="card-actions">
+        <button class="btn btn-sm" onclick="toggleChain('${ch.id}',${ch.enabled})">${ch.enabled?'Disable':'Enable'}</button>
+        <button class="btn btn-sm" onclick='openChainModal(${JSON.stringify(ch)})'>Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteChain('${ch.id}','${esc(ch.name)}')">Delete</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+
 // Init
-loadDashboard(); loadProviders(); loadModels(); loadKeys();
+loadDashboard(); loadProviders(); loadModels(); loadKeys(); loadChains();
 setInterval(() => {
   if (!autoRefresh) return;
   const p = document.querySelector('.page.active')?.id;

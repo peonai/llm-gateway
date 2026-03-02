@@ -168,3 +168,32 @@ api.get("/model-timeline", (c) => {
   const hours = parseInt(c.req.query("hours") || "24");
   return c.json(db.getModelTimeline(hours));
 });
+
+// --- Fallback Chains ---
+api.get("/chains", (c) => c.json(db.listChains()));
+
+api.post("/chains", async (c) => {
+  const body = await c.req.json();
+  const chain = db.createChain({
+    name: body.name,
+    mode: body.mode || "model",
+    items: typeof body.items === "string" ? body.items : JSON.stringify(body.items || []),
+  });
+  return c.json(chain, 201);
+});
+
+api.put("/chains/:id", async (c) => {
+  const body = await c.req.json();
+  const chain = db.updateChain(c.req.param("id"), {
+    name: body.name,
+    mode: body.mode,
+    items: typeof body.items === "string" ? body.items : (body.items ? JSON.stringify(body.items) : undefined),
+    enabled: body.enabled,
+  });
+  return chain ? c.json(chain) : c.json({ error: "not found" }, 404);
+});
+
+api.delete("/chains/:id", (c) => {
+  db.deleteChain(c.req.param("id"));
+  return c.json({ ok: true });
+});
