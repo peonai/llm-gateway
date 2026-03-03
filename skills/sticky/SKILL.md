@@ -63,4 +63,4 @@ For set/clear: confirm success or show error message.
 - Default TTL is 2 hours (set by gateway when auto-sticky triggers)
 - Manual sticky (via POST) takes priority over auto-sticky
 - If a model belongs to a chain, the sticky is set on the chain name automatically
-- `deploymentId` is a UUID; get valid ones from `/api/deployments`
+- `deploymentId` is a UUID; get valid ones from `/api/deployments` or run `node sticky.js deployments`
