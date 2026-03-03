@@ -71,7 +71,35 @@ export function getCooldownInfo() {
   return info;
 }
 
-async function forwardRequest(deployment: Deployment, inboundPath: string, method: string, headers: Headers, body: any): Promise<Response> {
+// Clean request body for OpenAI providers - strip Anthropic-specific fields
+function cleanForOpenAI(body: any): any {
+  const cleaned = { ...body };
+  // Clean messages - strip cache_control and other Anthropic-specific fields from content
+  if (cleaned.messages && Array.isArray(cleaned.messages)) {
+    cleaned.messages = cleaned.messages.map((m: any) => {
+      const msg: any = { role: m.role };
+      if (typeof m.content === "string") {
+        msg.content = m.content;
+      } else if (Array.isArray(m.content)) {
+        // Clean each content block
+        msg.content = m.content.map((block: any) => {
+          if (typeof block === "string") return block;
+          // Remove cache_control and keep only OpenAI-compatible fields
+          const { cache_control, ...rest } = block;
+          return rest;
+        });
+      } else {
+        msg.content = m.content;
+      }
+      return msg;
+    });
+  }
+  // Remove Anthropic-specific top-level fields
+  delete cleaned.system; // OpenAI uses messages with role "system"
+  return cleaned;
+}
+
+async function forwardRequest(deployment: Deployment, inboundPath: string, method: string, headers: Headers, body: any): Promise<{ resp: Response; needsResponseConversion: "toAnthropic" | "toOpenAI" | null }> {
   // Determine the correct outbound path based on provider type
   // If inbound is OpenAI format but provider is Anthropic (or vice versa), convert
   const isInboundOpenAI = inboundPath.includes("/chat/completions");
@@ -79,22 +107,35 @@ async function forwardRequest(deployment: Deployment, inboundPath: string, metho
 
   let outPath: string;
   let requestBody: any;
+  let needsResponseConversion: "toAnthropic" | "toOpenAI" | null = null;
 
   if (isInboundOpenAI && isProviderAnthropic) {
-    // OpenAI -> Anthropic: convert format
+    // OpenAI -> Anthropic: convert format, need to convert response back to OpenAI
     outPath = "/v1/messages";
     requestBody = convertOpenAIToAnthropic(body, deployment.modelName);
+    needsResponseConversion = "toOpenAI";
   } else if (!isInboundOpenAI && !isProviderAnthropic) {
-    // Anthropic -> OpenAI: convert format
+    // Anthropic -> OpenAI: convert format, need to convert response back to Anthropic
     outPath = "/v1/chat/completions";
     requestBody = convertAnthropicToOpenAI(body, deployment.modelName);
+    needsResponseConversion = "toAnthropic";
+  } else if (!isProviderAnthropic) {
+    // OpenAI -> OpenAI: pass through but clean Anthropic-specific fields
+    outPath = "/v1/chat/completions";
+    requestBody = cleanForOpenAI({ ...body, model: deployment.modelName });
   } else {
-    // Same protocol, pass through
-    outPath = isProviderAnthropic ? "/v1/messages" : "/v1/chat/completions";
+    // Anthropic -> Anthropic: pass through
+    outPath = "/v1/messages";
     requestBody = { ...body, model: deployment.modelName };
   }
 
-  const url = `${deployment.baseUrl.replace(/\/$/, "")}${outPath}`;
+  // Auto-handle /v1 path for OpenAI-type providers
+  let baseUrl = deployment.baseUrl.replace(/\/$/, "");
+  if (!isProviderAnthropic && !baseUrl.endsWith("/v1")) {
+    baseUrl += "/v1";
+  }
+
+  const url = `${baseUrl}${outPath.startsWith("/v1") ? outPath.slice(3) : outPath}`;
   const outHeaders: Record<string, string> = { "Content-Type": "application/json" };
 
   // Apply custom headers from provider config
@@ -119,7 +160,7 @@ async function forwardRequest(deployment: Deployment, inboundPath: string, metho
   try {
     const resp = await fetch(url, { method, headers: outHeaders, body: JSON.stringify(requestBody), signal: controller.signal });
     clearTimeout(timeoutId);
-    return resp;
+    return { resp, needsResponseConversion };
   } catch (err: any) {
     clearTimeout(timeoutId);
     throw err.name === "AbortError" ? new Error(`Timeout after ${deployment.timeout}s`) : err;
@@ -149,10 +190,31 @@ function convertOpenAIToAnthropic(body: any, modelName: string): any {
 function convertAnthropicToOpenAI(body: any, modelName: string): any {
   const messages: any[] = [];
   if (body.system) {
-    messages.push({ role: "system", content: body.system });
+    // System can be string or array of content blocks
+    const systemContent = typeof body.system === "string"
+      ? body.system
+      : (Array.isArray(body.system) ? body.system.map((b: any) => b.text || "").join("") : String(body.system));
+    messages.push({ role: "system", content: systemContent });
   }
   (body.messages || []).forEach((m: any) => {
-    messages.push({ role: m.role, content: typeof m.content === "string" ? m.content : JSON.stringify(m.content) });
+    let content: string;
+    if (typeof m.content === "string") {
+      content = m.content;
+    } else if (Array.isArray(m.content)) {
+      // Extract text from content blocks, stripping cache_control and other Anthropic-specific fields
+      content = m.content.map((block: any) => {
+        if (typeof block === "string") return block;
+        if (block.type === "text") return block.text || "";
+        if (block.type === "image") {
+          // Convert Anthropic image format to OpenAI format
+          return ""; // Skip images for now in text conversion
+        }
+        return "";
+      }).join("");
+    } else {
+      content = String(m.content);
+    }
+    messages.push({ role: m.role, content });
   });
   const result: any = {
     model: modelName,
@@ -165,6 +227,209 @@ function convertAnthropicToOpenAI(body: any, modelName: string): any {
   return result;
 }
 
+// --- Response converters ---
+function convertOpenAIResponseToAnthropic(openaiResp: any, modelName: string): any {
+  // Convert OpenAI chat completion response to Anthropic messages response
+  const choice = openaiResp.choices?.[0];
+  const message = choice?.message;
+  const content = message?.content || "";
+
+  return {
+    id: openaiResp.id || `msg_${Date.now()}`,
+    type: "message",
+    role: "assistant",
+    model: modelName,
+    content: [{ type: "text", text: content }],
+    stop_reason: choice?.finish_reason === "stop" ? "end_turn" : (choice?.finish_reason || "end_turn"),
+    stop_sequence: null,
+    usage: {
+      input_tokens: openaiResp.usage?.prompt_tokens || 0,
+      output_tokens: openaiResp.usage?.completion_tokens || 0,
+    },
+  };
+}
+
+function convertAnthropicResponseToOpenAI(anthropicResp: any, modelName: string): any {
+  // Convert Anthropic messages response to OpenAI chat completion response
+  const content = anthropicResp.content || [];
+  const textContent = content.map((c: any) => c.type === "text" ? c.text : "").join("");
+
+  return {
+    id: anthropicResp.id || `chatcmpl-${Date.now()}`,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model: modelName,
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content: textContent },
+      finish_reason: anthropicResp.stop_reason === "end_turn" ? "stop" : (anthropicResp.stop_reason || "stop"),
+    }],
+    usage: {
+      prompt_tokens: anthropicResp.usage?.input_tokens || 0,
+      completion_tokens: anthropicResp.usage?.output_tokens || 0,
+      total_tokens: (anthropicResp.usage?.input_tokens || 0) + (anthropicResp.usage?.output_tokens || 0),
+    },
+  };
+}
+
+// --- Streaming response converters ---
+function convertOpenAIStreamToAnthropic(stream: ReadableStream<Uint8Array>, modelName: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let messageStartSent = false;
+  let contentBlockStartSent = false;
+  const msgId = `msg_${Date.now()}`;
+
+  return new ReadableStream({
+    async start(controller) {
+      const reader = stream.getReader();
+
+      // Send message_start event first
+      const messageStart = {
+        type: "message_start",
+        message: {
+          id: msgId,
+          type: "message",
+          role: "assistant",
+          model: modelName,
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 0, output_tokens: 0 }
+        }
+      };
+      controller.enqueue(encoder.encode(`event: message_start\ndata: ${JSON.stringify(messageStart)}\n\n`));
+      messageStartSent = true;
+
+      // Send content_block_start
+      controller.enqueue(encoder.encode(`event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n`));
+      contentBlockStartSent = true;
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const data = line.slice(6).trim();
+              if (data === "[DONE]") {
+                // Send content_block_stop
+                controller.enqueue(encoder.encode(`event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n`));
+                // Send message_delta with stop_reason
+                controller.enqueue(encoder.encode(`event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":0}}\n\n`));
+                // Send message_stop
+                controller.enqueue(encoder.encode(`event: message_stop\ndata: {"type":"message_stop"}\n\n`));
+                continue;
+              }
+              try {
+                const parsed = JSON.parse(data);
+                const delta = parsed.choices?.[0]?.delta;
+                const content = delta?.content;
+                if (content) {
+                  const anthropicDelta = {
+                    type: "content_block_delta",
+                    index: 0,
+                    delta: { type: "text_delta", text: content }
+                  };
+                  controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify(anthropicDelta)}\n\n`));
+                }
+                // Check for finish_reason
+                const finishReason = parsed.choices?.[0]?.finish_reason;
+                if (finishReason) {
+                  controller.enqueue(encoder.encode(`event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n`));
+                  const stopReason = finishReason === "stop" ? "end_turn" : finishReason;
+                  controller.enqueue(encoder.encode(`event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"${stopReason}","stop_sequence":null},"usage":{"output_tokens":0}}\n\n`));
+                  controller.enqueue(encoder.encode(`event: message_stop\ndata: {"type":"message_stop"}\n\n`));
+                }
+              } catch {}
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+        controller.close();
+      }
+    }
+  });
+}
+
+function convertAnthropicStreamToOpenAI(stream: ReadableStream<Uint8Array>, modelName: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const chatId = `chatcmpl-${Date.now()}`;
+
+  return new ReadableStream({
+    async start(controller) {
+      const reader = stream.getReader();
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          let currentEvent = "";
+          for (const line of lines) {
+            if (line.startsWith("event: ")) {
+              currentEvent = line.slice(7).trim();
+            } else if (line.startsWith("data: ")) {
+              const data = line.slice(6).trim();
+              try {
+                const parsed = JSON.parse(data);
+
+                if (currentEvent === "content_block_delta" && parsed.delta?.type === "text_delta") {
+                  const openaiChunk = {
+                    id: chatId,
+                    object: "chat.completion.chunk",
+                    created: Math.floor(Date.now() / 1000),
+                    model: modelName,
+                    choices: [{
+                      index: 0,
+                      delta: { content: parsed.delta.text },
+                      finish_reason: null
+                    }]
+                  };
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`));
+                } else if (currentEvent === "message_delta" && parsed.delta?.stop_reason) {
+                  const finishReason = parsed.delta.stop_reason === "end_turn" ? "stop" : parsed.delta.stop_reason;
+                  const openaiChunk = {
+                    id: chatId,
+                    object: "chat.completion.chunk",
+                    created: Math.floor(Date.now() / 1000),
+                    model: modelName,
+                    choices: [{
+                      index: 0,
+                      delta: {},
+                      finish_reason: finishReason
+                    }]
+                  };
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`));
+                } else if (currentEvent === "message_stop") {
+                  controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+                }
+              } catch {}
+              currentEvent = "";
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+        controller.close();
+      }
+    }
+  });
+}
+
 async function tryDeployment(
   dep: Deployment, modelName: string, path: string, method: string,
   headers: Headers, body: any, isStreaming: boolean, trace: RouteTrace
@@ -174,12 +439,14 @@ async function tryDeployment(
   let lastError = "";
   let lastStatus = 502;
 
+
   trace.steps.push({ action: "try_deployment", model: dep.modelName, provider: dep.providerName, deploymentId: dep.id });
 
   while (retries >= 0) {
     try {
-      const resp = await forwardRequest(dep, path, method, headers, body);
+      const { resp, needsResponseConversion } = await forwardRequest(dep, path, method, headers, body);
       const latencyMs = Date.now() - start;
+
 
       if (resp.ok) {
         recordSuccess(dep.id, modelName);
@@ -195,7 +462,24 @@ async function tryDeployment(
         trace.success = true;
         if (!trace.skipSticky) setStickyDeployment(trace.stickyKey || modelName, dep.id);
 
+        // For streaming, handle format conversion if needed
         if (isStreaming && resp.body) {
+          if (needsResponseConversion === "toAnthropic") {
+            const convertedStream = convertOpenAIStreamToAnthropic(resp.body, dep.modelName);
+            return { response: new Response(convertedStream, {
+              status: resp.status,
+              headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive",
+                "X-Route-Provider": dep.providerName, "X-Route-Model": dep.modelName },
+            }), final: true };
+          } else if (needsResponseConversion === "toOpenAI") {
+            const convertedStream = convertAnthropicStreamToOpenAI(resp.body, dep.modelName);
+            return { response: new Response(convertedStream, {
+              status: resp.status,
+              headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive",
+                "X-Route-Provider": dep.providerName, "X-Route-Model": dep.modelName },
+            }), final: true };
+          }
+          // No conversion needed, pass through
           return { response: new Response(resp.body, {
             status: resp.status,
             headers: { "Content-Type": resp.headers.get("Content-Type") || "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive",
@@ -203,12 +487,22 @@ async function tryDeployment(
           }), final: true };
         }
 
-        const respBody = await resp.text();
+        let respBody = await resp.text();
+
         try {
-          const parsed = JSON.parse(respBody);
+          let parsed = JSON.parse(respBody);
           const tokensIn = parsed.usage?.prompt_tokens ?? parsed.usage?.input_tokens ?? 0;
           const tokensOut = parsed.usage?.completion_tokens ?? parsed.usage?.output_tokens ?? 0;
           if (tokensIn || tokensOut) insertLog({ model: modelName, deploymentId: dep.id, providerName: dep.providerName, status: resp.status, latencyMs, tokensIn, tokensOut });
+
+          // Convert response format if needed
+          if (needsResponseConversion === "toAnthropic") {
+            parsed = convertOpenAIResponseToAnthropic(parsed, dep.modelName);
+            respBody = JSON.stringify(parsed);
+          } else if (needsResponseConversion === "toOpenAI") {
+            parsed = convertAnthropicResponseToOpenAI(parsed, dep.modelName);
+            respBody = JSON.stringify(parsed);
+          }
         } catch {}
 
         return { response: new Response(respBody, { status: resp.status, headers: { "Content-Type": "application/json", "X-Route-Provider": dep.providerName, "X-Route-Model": dep.modelName } }), final: true };
@@ -444,7 +738,14 @@ export async function routeTestDirect(modelName: string, provider: any, headers:
 
   const isAnthropic = provider.apiType === "anthropic";
   const path = isAnthropic ? "/v1/messages" : "/v1/chat/completions";
-  const url = `${provider.baseUrl.replace(/\/$/, "")}${path}`;
+
+  // Auto-handle /v1 path for OpenAI-type providers
+  let baseUrl = provider.baseUrl.replace(/\/$/, "");
+  if (!isAnthropic && !baseUrl.endsWith("/v1")) {
+    baseUrl += "/v1";
+  }
+
+  const url = `${baseUrl}${path.startsWith("/v1") ? path.slice(3) : path}`;
 
   const outHeaders: Record<string, string> = { "Content-Type": "application/json" };
   if (isAnthropic) {

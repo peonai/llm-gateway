@@ -1134,7 +1134,7 @@ async function saveModel() {
     closeModal('model-modal'); toast('Model updated'); loadModels(); loadChains(); loadDashboard();
   } else {
     await fetch(API+'/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
-    closeModal('model-modal'); toast('Model added'); loadModels();
+    closeModal('model-modal'); toast('Model added'); loadModels(); loadChains(); loadDashboard();
   }
 }
 async function deleteModel(id,name) { if(!confirm('Delete "'+name+'"?'))return; await fetch(API+'/models/'+id,{method:'DELETE'}); toast('Deleted'); loadModels(); loadChains(); loadDashboard(); }
@@ -1165,8 +1165,8 @@ async function saveDeployment() {
     closeModal('deploy-modal'); toast('Deployment added'); loadModels(); loadDashboard();
   }
 }
-async function deleteDeployment(id) { await fetch(API+'/deployments/'+id,{method:'DELETE'}); toast('Removed'); loadModels(); loadDashboard(); }
-async function toggleDeployment(id,en) { await fetch(API+'/deployments/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:en?0:1})}); loadModels(); }
+async function deleteDeployment(id) { await fetch(API+'/deployments/'+id,{method:'DELETE'}); toast('Removed'); loadModels(); loadDashboard(); loadChains(); }
+async function toggleDeployment(id,en) { await fetch(API+'/deployments/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:en?0:1})}); loadModels(); loadDashboard(); }
 
 async function loadModels() {
   const models = await fetch(API+'/models').then(r=>r.json());
@@ -1719,6 +1719,7 @@ async function loadChains() {
 
 // ============ PLAYGROUND ============
 let pgSelected = null; // { type: "model"|"chain", name: "..." }
+let pgAllProviders = []; // Store all providers for filtering
 
 function pgSwitchTab(type) {
   document.querySelectorAll(".pg-target-tab").forEach(t => t.classList.toggle("active", t.dataset.type === type));
@@ -1763,6 +1764,7 @@ async function loadPlaygroundModels() {
 
   // Custom provider dropdown
   const providers = await fetch(API+"/providers").then(r=>r.json());
+  pgAllProviders = providers;
   const pgProvOptions = providers.map(p => {
     const tags = (p.tags||"").split(",").filter(t=>t.trim()).map(t=>t.trim()).join(" · ");
     return { value: p.id, label: `${p.name} (${p.apiType})${tags ? " — "+tags : ""}`, data: { base: p.baseUrl, type: p.apiType } };
@@ -1804,6 +1806,7 @@ function pgUpdateCustom() {
   const wrap = document.getElementById("pg-custom-provider-wrap");
   const selectedOpt = wrap.querySelector('.search-select-option.selected');
   const provName = selectedOpt?.textContent || "";
+
   if (!model) return;
   pgSelected = { type: "custom", name: model, providerId: provId, providerName: provName };
   document.getElementById("pg-model").value = model;
