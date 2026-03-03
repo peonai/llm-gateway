@@ -266,6 +266,45 @@ body {
 @keyframes slideIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes fadeOut { to { opacity: 0; transform: translateY(-10px); } }
 
+/* Searchable Select */
+.search-select { position: relative; }
+.search-select-display {
+  width: 100%; padding: 8px 12px; background: var(--bg-input);
+  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); font-family: var(--font); font-size: 12px;
+  cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+  outline: none; transition: border-color 0.2s; box-sizing: border-box;
+}
+.search-select-display:hover { border-color: var(--green); }
+.search-select-display.open { border-color: var(--green); border-radius: 6px 6px 0 0; }
+.search-select-arrow { font-size: 10px; color: var(--text-dim); transition: transform 0.2s; }
+.search-select-display.open .search-select-arrow { transform: rotate(180deg); }
+.search-select-dropdown {
+  display: none; position: absolute; top: 100%; left: 0; right: 0;
+  background: var(--bg-card); border: 1px solid var(--green); border-top: none;
+  border-radius: 0 0 6px 6px; max-height: 200px; overflow-y: auto; z-index: 500;
+}
+.search-select-dropdown.open { display: block; }
+.search-select-search {
+  width: 100%; padding: 8px 12px; background: var(--bg-input);
+  border: none; border-bottom: 1px solid var(--border);
+  color: var(--text); font-family: var(--font); font-size: 12px; outline: none;
+  box-sizing: border-box;
+}
+.search-select-option {
+  padding: 8px 12px; cursor: pointer; font-size: 12px; color: var(--text);
+  transition: background 0.15s;
+}
+.search-select-option:hover { background: rgba(0,255,136,0.08); }
+.search-select-option.selected { color: var(--green); }
+.search-select-option.hidden { display: none; }
+.search-select-empty { padding: 12px; text-align: center; color: var(--text-dim); font-size: 11px; }
+
+/* Trace error expand */
+.trace-error-preview { color: var(--red); }
+.trace-error-expand { cursor: pointer; font-size: 12px; opacity: 0.7; transition: opacity 0.2s; vertical-align: middle; }
+.trace-error-expand:hover { opacity: 1; }
+
 /* Filters */
 .filter-bar { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
 .filter-bar input, .filter-bar select {
@@ -623,7 +662,17 @@ body {
           </div>
           <div class="form-group">
             <label>Provider</label>
-            <select id="pg-custom-provider" onchange="pgUpdateCustom()"></select>
+            <div class="search-select" id="pg-custom-provider-wrap">
+              <div class="search-select-display" onclick="toggleSearchSelect('pg-custom-provider-wrap')">
+                <span class="search-select-text">Select provider...</span>
+                <span class="search-select-arrow">▼</span>
+              </div>
+              <div class="search-select-dropdown">
+                <input type="text" class="search-select-search" placeholder="Search providers..." oninput="filterSearchSelect('pg-custom-provider-wrap', this.value)">
+                <div class="search-select-options"></div>
+              </div>
+            </div>
+            <input type="hidden" id="pg-custom-provider">
           </div>
         </div>
 
@@ -774,6 +823,7 @@ body {
       <select id="provider-type"><option value="openai">OpenAI Compatible</option><option value="anthropic">Anthropic Messages</option></select>
     </div>
     <div class="form-group"><label>Tags (comma separated)</label><input type="text" id="prov-tags" placeholder="e.g. cheap, fast, backup"></div>
+    <div class="form-group"><label>Custom Headers (JSON)</label><textarea id="prov-custom-headers" rows="3" placeholder='{"User-Agent": "claude-cli/2.0.76 (external, cli)"}'></textarea></div>
     <div class="modal-actions"><button class="btn" onclick="closeModal('provider-modal')">Cancel</button><button class="btn btn-primary" onclick="saveProvider()">Save</button></div>
   </div>
 </div>
@@ -794,7 +844,19 @@ body {
     <div class="modal-title" id="deploy-modal-title">Add Deployment</div>
     <input type="hidden" id="deploy-edit-id">
     <input type="hidden" id="deploy-model-id">
-    <div class="form-group"><label>Provider</label><select id="deploy-provider"></select></div>
+    <div class="form-group"><label>Provider</label>
+      <div class="search-select" id="deploy-provider-wrap">
+        <div class="search-select-display" onclick="toggleSearchSelect('deploy-provider-wrap')">
+          <span class="search-select-text">Select provider...</span>
+          <span class="search-select-arrow">▼</span>
+        </div>
+        <div class="search-select-dropdown">
+          <input type="text" class="search-select-search" placeholder="Search providers..." oninput="filterSearchSelect('deploy-provider-wrap', this.value)">
+          <div class="search-select-options"></div>
+        </div>
+      </div>
+      <input type="hidden" id="deploy-provider">
+    </div>
     <div class="form-group"><label>Actual Model Name (at provider)</label><input type="text" id="deploy-model-name" placeholder="e.g. claude-opus-4-5"></div>
     <div class="form-group"><label>Priority (lower = higher priority)</label><input type="number" id="deploy-order" value="1" min="1"></div>
     <div class="form-group"><label>Timeout (seconds)</label><input type="number" id="deploy-timeout" value="60" min="5"></div>
@@ -902,6 +964,88 @@ document.querySelectorAll('.modal-overlay').forEach(o => {
 
 function esc(s) { return !s ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+// ============ SEARCHABLE SELECT ============
+function populateSearchSelect(wrapId, options, selectedValue, onChange) {
+  const wrap = document.getElementById(wrapId);
+  const optionsDiv = wrap.querySelector('.search-select-options');
+  const hiddenInput = wrap.nextElementSibling || document.getElementById(wrapId.replace('-wrap',''));
+  const displayText = wrap.querySelector('.search-select-text');
+  wrap._onChange = onChange;
+  wrap._options = options;
+
+  let html = '';
+  let selectedLabel = 'Select provider...';
+  options.forEach(opt => {
+    const sel = opt.value === selectedValue ? 'selected' : '';
+    if (sel) selectedLabel = opt.label;
+    const dataAttrs = Object.entries(opt.data||{}).map(([k,v])=>`data-${k}="${esc(v)}"`).join(' ');
+    html += `<div class="search-select-option ${sel}" data-value="${esc(opt.value)}" ${dataAttrs} onclick="selectSearchOption('${wrapId}',this)">${esc(opt.label)}</div>`;
+  });
+  if (!options.length) html = '<div class="search-select-empty">No providers found</div>';
+  optionsDiv.innerHTML = html;
+  displayText.textContent = selectedLabel;
+  if (hiddenInput) hiddenInput.value = selectedValue || '';
+}
+
+function toggleSearchSelect(wrapId) {
+  const wrap = document.getElementById(wrapId);
+  const display = wrap.querySelector('.search-select-display');
+  const dropdown = wrap.querySelector('.search-select-dropdown');
+  const isOpen = dropdown.classList.contains('open');
+  // Close all other dropdowns first
+  document.querySelectorAll('.search-select-dropdown.open').forEach(d => { d.classList.remove('open'); d.parentElement.querySelector('.search-select-display').classList.remove('open'); });
+  if (!isOpen) {
+    dropdown.classList.add('open');
+    display.classList.add('open');
+    const searchInput = dropdown.querySelector('.search-select-search');
+    searchInput.value = '';
+    searchInput.focus();
+    filterSearchSelect(wrapId, '');
+  }
+}
+
+function filterSearchSelect(wrapId, query) {
+  const wrap = document.getElementById(wrapId);
+  const options = wrap.querySelectorAll('.search-select-option');
+  const q = query.toLowerCase();
+  let visibleCount = 0;
+  options.forEach(opt => {
+    const match = !q || opt.textContent.toLowerCase().includes(q);
+    opt.classList.toggle('hidden', !match);
+    if (match) visibleCount++;
+  });
+  const empty = wrap.querySelector('.search-select-empty');
+  if (empty) empty.remove();
+  if (visibleCount === 0) {
+    const optionsDiv = wrap.querySelector('.search-select-options');
+    optionsDiv.insertAdjacentHTML('beforeend', '<div class="search-select-empty">No matches</div>');
+  }
+}
+
+function selectSearchOption(wrapId, el) {
+  const wrap = document.getElementById(wrapId);
+  const value = el.dataset.value;
+  const label = el.textContent;
+  wrap.querySelector('.search-select-text').textContent = label;
+  wrap.querySelectorAll('.search-select-option').forEach(o => o.classList.remove('selected'));
+  el.classList.add('selected');
+  // Find the hidden input — either next sibling or by derived ID
+  const hiddenId = wrapId.replace('-wrap','');
+  const hiddenInput = document.getElementById(hiddenId);
+  if (hiddenInput) hiddenInput.value = value;
+  // Close dropdown
+  wrap.querySelector('.search-select-dropdown').classList.remove('open');
+  wrap.querySelector('.search-select-display').classList.remove('open');
+  if (wrap._onChange) wrap._onChange(value, el);
+}
+
+// Close dropdowns on outside click
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.search-select')) {
+    document.querySelectorAll('.search-select-dropdown.open').forEach(d => { d.classList.remove('open'); d.parentElement.querySelector('.search-select-display').classList.remove('open'); });
+  }
+});
+
 // ============ PROVIDERS ============
 function openProviderModal(p) {
   document.getElementById('provider-edit-id').value = p?.id || '';
@@ -910,13 +1054,19 @@ function openProviderModal(p) {
   document.getElementById('provider-key').value = p?.apiKey || '';
   document.getElementById('provider-type').value = p?.apiType || 'openai';
   document.getElementById('prov-tags').value = p?.tags || '';
+  document.getElementById('prov-custom-headers').value = p?.customHeaders || '{}';
   document.getElementById('provider-modal-title').textContent = p ? 'Edit Provider' : 'Add Provider';
   document.getElementById('provider-modal').classList.add('open');
 }
 
 async function saveProvider() {
   const id = document.getElementById('provider-edit-id').value;
-  const data = { name: document.getElementById('provider-name').value, baseUrl: document.getElementById('provider-url').value, apiKey: document.getElementById('provider-key').value, apiType: document.getElementById('provider-type').value, tags: document.getElementById('prov-tags').value };
+  const customHeadersRaw = document.getElementById('prov-custom-headers').value.trim();
+  let customHeaders = '{}';
+  if (customHeadersRaw) {
+    try { JSON.parse(customHeadersRaw); customHeaders = customHeadersRaw; } catch { toast('Invalid JSON in Custom Headers','error'); return; }
+  }
+  const data = { name: document.getElementById('provider-name').value, baseUrl: document.getElementById('provider-url').value, apiKey: document.getElementById('provider-key').value, apiType: document.getElementById('provider-type').value, tags: document.getElementById('prov-tags').value, customHeaders };
   if (!data.name || !data.baseUrl) { toast('Name and URL required','error'); return; }
   await fetch(id ? API+'/providers/'+id : API+'/providers', { method: id?'PUT':'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data) });
   closeModal('provider-modal'); toast(id ? 'Provider updated' : 'Provider added'); loadProviders(); loadModels(); loadChains();
@@ -943,7 +1093,7 @@ async function loadProviders() {
   if (!ps.length) { g.innerHTML = '<div style="color:var(--text-dim);padding:40px;text-align:center">No providers. Add one to start.</div>'; return; }
   g.innerHTML = ps.map(p => {
     const badge = p.apiType==='anthropic' ? 'badge-anthropic' : 'badge-openai';
-    const masked = p.apiKey ? p.apiKey.slice(0,8)+'...'+p.apiKey.slice(-4) : 'none';
+    const masked = p.apiKey ? '••••••••••••••••' : 'none';
     const tags = (p.tags||'').split(',').filter(t=>t.trim()).map(t => `<span class="prov-tag">${esc(t.trim())}</span>`).join('');
     return `<div class="card"><div class="card-header"><div><div class="card-title">${esc(p.name)}</div><div class="card-meta">${esc(p.baseUrl)}</div></div><span class="card-badge ${badge}">${p.apiType}</span></div><div class="card-meta">Key: ${masked}</div><div class="card-actions" style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;gap:4px;flex-wrap:wrap">${tags}</div><div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="testProvider('${p.id}')">Test</button><button class="btn btn-sm" onclick="openProviderModal(providerCache['${p.id}'])">Edit</button><button class="btn btn-sm btn-danger" onclick="deleteProvider('${p.id}','${esc(p.name)}')">Delete</button></div></div></div>`;
   }).join('');
@@ -979,7 +1129,8 @@ function openDeployModal(modelId, dep) {
   document.getElementById('deploy-retries').value = dep?.maxRetries ?? '2';
   document.getElementById('deploy-modal-title').textContent = dep ? 'Edit Deployment' : 'Add Deployment';
   fetch(API+'/providers').then(r=>r.json()).then(ps => {
-    document.getElementById('deploy-provider').innerHTML = ps.map(p=>`<option value="${p.id}" ${dep && dep.providerId===p.id ? 'selected' : ''}>${p.name} (${p.apiType})</option>`).join('');
+    const options = ps.map(p => ({ value: p.id, label: `${p.name} (${p.apiType})` }));
+    populateSearchSelect('deploy-provider-wrap', options, dep?.providerId || '');
   });
   document.getElementById('deploy-modal').classList.add('open');
 }
@@ -1123,7 +1274,7 @@ async function loadKeys() {
     const allowed = k.allowedModels || 'All models';
     return `<div class="card">
       <div class="card-header"><div class="card-title">${esc(k.name)}</div>${statusBadge}</div>
-      <div class="key-display"><span class="key-text">${esc(k.key)}</span><span class="key-copy" onclick="copyKey('${esc(k.key)}')">📋</span></div>
+      <div class="key-display"><span class="key-text">••••••••••••••••</span><span class="key-copy" onclick="copyKey('${esc(k.key)}')" title="Copy full key">📋</span></div>
       <div class="key-stats">
         <span>Requests: <strong style="color:var(--text)">${k.totalRequests}</strong></span>
         <span>Last used: ${lastUsed}</span>
@@ -1592,9 +1743,12 @@ async function loadPlaygroundModels() {
   }
 
   // Custom provider dropdown
-  const customProvSel = document.getElementById("pg-custom-provider");
   const providers = await fetch(API+"/providers").then(r=>r.json());
-  customProvSel.innerHTML = providers.map(p => { const tags = (p.tags||"").split(",").filter(t=>t.trim()).map(t=>t.trim()).join(" · "); return `<option value="${p.id}" data-base="${p.baseUrl}" data-key="${p.apiKey}" data-type="${p.apiType}">${p.name} (${p.apiType})${tags ? " — "+tags : ""}</option>`; }).join("");
+  const pgProvOptions = providers.map(p => {
+    const tags = (p.tags||"").split(",").filter(t=>t.trim()).map(t=>t.trim()).join(" · ");
+    return { value: p.id, label: `${p.name} (${p.apiType})${tags ? " — "+tags : ""}`, data: { base: p.baseUrl, type: p.apiType } };
+  });
+  populateSearchSelect('pg-custom-provider-wrap', pgProvOptions, providers[0]?.id || '', () => pgUpdateCustom());
 
   // Chains grid
   const cg = document.getElementById("pg-chain-grid");
@@ -1627,9 +1781,10 @@ async function loadPlaygroundModels() {
 
 function pgUpdateCustom() {
   const model = document.getElementById("pg-custom-model").value;
-  const provEl = document.getElementById("pg-custom-provider");
-  const provId = provEl.value;
-  const provName = provEl.options[provEl.selectedIndex]?.text || "";
+  const provId = document.getElementById("pg-custom-provider").value;
+  const wrap = document.getElementById("pg-custom-provider-wrap");
+  const selectedOpt = wrap.querySelector('.search-select-option.selected');
+  const provName = selectedOpt?.textContent || "";
   if (!model) return;
   pgSelected = { type: "custom", name: model, providerId: provId, providerName: provName };
   document.getElementById("pg-model").value = model;
@@ -1665,6 +1820,7 @@ async function runPlayground() {
 
 function renderTrace(trace) {
   const traceEl = document.getElementById("pg-trace");
+  const traceErrors = []; // Store full errors for modal lookup
 
   const stepsHtml = trace.steps.map(s => {
     let dotClass, icon, actionLabel, detail;
@@ -1681,6 +1837,10 @@ function renderTrace(trace) {
         dotClass = "trace-dot-deploy"; icon = "→"; actionLabel = "Try Deployment";
         detail = `<code>${esc(s.model)}</code> @ <code>${esc(s.provider)}</code>`;
         break;
+      case "try_sticky":
+        dotClass = "trace-dot-deploy"; icon = "📌"; actionLabel = "Try Sticky";
+        detail = `<code>${esc(s.model)}</code> @ <code>${esc(s.provider)}</code>`;
+        break;
       case "success":
         dotClass = "trace-dot-ok"; icon = "✓"; actionLabel = "Success";
         detail = `<code>${esc(s.provider)}</code> / <code>${esc(s.model)}</code> — ${s.status} in ${s.latencyMs}ms`;
@@ -1688,8 +1848,16 @@ function renderTrace(trace) {
       case "fail":
         dotClass = "trace-dot-err"; icon = "✗"; actionLabel = "Failed";
         detail = s.provider ? `<code>${esc(s.provider)}</code> / <code>${esc(s.model||"")}</code>` : "";
-        if (s.error) detail += ` — ${esc(s.error).slice(0,80)}`;
         if (s.status) detail += ` (${s.status})`;
+        if (s.error) {
+          const short = esc(s.error).slice(0, 80);
+          detail += ` — <span class="trace-error-preview">${short}${s.error.length > 80 ? '…' : ''}</span>`;
+          if (s.error.length > 60) {
+            const errIdx = traceErrors.length;
+            traceErrors.push(s.error);
+            detail += ` <span class="trace-error-expand" onclick="showTraceError(${errIdx})" title="View full error">🔍</span>`;
+          }
+        }
         break;
       case "skip_cooldown":
         dotClass = "trace-dot-skip"; icon = "⏸"; actionLabel = "Skipped (Cooldown)";
@@ -1725,6 +1893,33 @@ function renderTrace(trace) {
   </div>`;
 
   traceEl.innerHTML = `<div class="trace-flow">${stepsHtml}</div>${summaryHtml}`;
+  window._traceErrors = traceErrors;
+}
+
+function showTraceError(idx) {
+  const error = window._traceErrors?.[idx] || "No error details";
+  // Try to format as JSON
+  let formatted;
+  try {
+    const parsed = JSON.parse(error);
+    formatted = JSON.stringify(parsed, null, 2);
+  } catch { formatted = error; }
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay open';
+  overlay.style.zIndex = '600';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="modal" style="max-width:600px;max-height:80vh;display:flex;flex-direction:column">
+    <div class="modal-title" style="display:flex;justify-content:space-between;align-items:center">
+      <span>Error Details</span>
+      <button class="btn btn-sm" onclick="this.closest('.modal-overlay').remove()" style="font-size:14px;padding:2px 8px">✕</button>
+    </div>
+    <pre style="flex:1;overflow:auto;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:12px;font-size:11px;color:var(--red);white-space:pre-wrap;word-break:break-all;margin:0;max-height:60vh">${esc(formatted)}</pre>
+    <div class="modal-actions">
+      <button class="btn" onclick="navigator.clipboard.writeText(window._traceErrors[${idx}]);toast('Copied')">📋 Copy</button>
+      <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Close</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
 }
 
 

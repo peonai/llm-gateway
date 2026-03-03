@@ -32,6 +32,7 @@ export function getDb(): DbLike {
     db.exec("PRAGMA foreign_keys = ON");
     // Migrations
     try { db.exec("ALTER TABLE providers ADD COLUMN tags TEXT NOT NULL DEFAULT ''"); } catch {}
+    try { db.exec("ALTER TABLE providers ADD COLUMN customHeaders TEXT NOT NULL DEFAULT '{}'"); } catch {}
     initSchema();
   }
   return db;
@@ -117,17 +118,17 @@ export function getProvider(id: string) {
   return getDb().query("SELECT * FROM providers WHERE id = ?").get(id);
 }
 
-export function createProvider(p: { name: string; baseUrl: string; apiKey: string; apiType: string }) {
+export function createProvider(p: { name: string; baseUrl: string; apiKey: string; apiType: string; tags?: string; customHeaders?: string }) {
   const id = uuid();
-  getDb().query("INSERT INTO providers (id, name, baseUrl, apiKey, apiType, tags) VALUES (?, ?, ?, ?, ?, ?)").run(id, p.name, p.baseUrl, p.apiKey, p.apiType, p.tags || "");
+  getDb().query("INSERT INTO providers (id, name, baseUrl, apiKey, apiType, tags, customHeaders) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, p.name, p.baseUrl, p.apiKey, p.apiType, p.tags || "", p.customHeaders || "{}");
   return getProvider(id);
 }
 
-export function updateProvider(id: string, p: { name?: string; baseUrl?: string; apiKey?: string; apiType?: string; tags?: string }) {
+export function updateProvider(id: string, p: { name?: string; baseUrl?: string; apiKey?: string; apiType?: string; tags?: string; customHeaders?: string }) {
   const existing: any = getProvider(id);
   if (!existing) return null;
-  getDb().query("UPDATE providers SET name=?, baseUrl=?, apiKey=?, apiType=?, tags=? WHERE id=?").run(
-    p.name ?? existing.name, p.baseUrl ?? existing.baseUrl, p.apiKey ?? existing.apiKey, p.apiType ?? existing.apiType, p.tags ?? existing.tags ?? "", id
+  getDb().query("UPDATE providers SET name=?, baseUrl=?, apiKey=?, apiType=?, tags=?, customHeaders=? WHERE id=?").run(
+    p.name ?? existing.name, p.baseUrl ?? existing.baseUrl, p.apiKey ?? existing.apiKey, p.apiType ?? existing.apiType, p.tags ?? existing.tags ?? "", p.customHeaders ?? existing.customHeaders ?? "{}", id
   );
   return getProvider(id);
 }
@@ -166,13 +167,13 @@ export function deleteModel(id: string) {
 // --- Deployment CRUD ---
 export function listDeployments(modelId?: string) {
   if (modelId) {
-    return getDb().query('SELECT d.*, p.name as providerName, p.baseUrl, p.apiKey, p.apiType FROM deployments d JOIN providers p ON d.providerId = p.id WHERE d.modelId = ? ORDER BY d."order"').all(modelId);
+    return getDb().query('SELECT d.*, p.name as providerName, p.baseUrl, p.apiKey, p.apiType, p.customHeaders FROM deployments d JOIN providers p ON d.providerId = p.id WHERE d.modelId = ? ORDER BY d."order"').all(modelId);
   }
-  return getDb().query('SELECT d.*, p.name as providerName, p.baseUrl, p.apiKey, p.apiType FROM deployments d JOIN providers p ON d.providerId = p.id ORDER BY d."order"').all();
+  return getDb().query('SELECT d.*, p.name as providerName, p.baseUrl, p.apiKey, p.apiType, p.customHeaders FROM deployments d JOIN providers p ON d.providerId = p.id ORDER BY d."order"').all();
 }
 
 export function getDeployment(id: string) {
-  return getDb().query("SELECT d.*, p.name as providerName, p.baseUrl, p.apiKey, p.apiType FROM deployments d JOIN providers p ON d.providerId = p.id WHERE d.id = ?").get(id);
+  return getDb().query("SELECT d.*, p.name as providerName, p.baseUrl, p.apiKey, p.apiType, p.customHeaders FROM deployments d JOIN providers p ON d.providerId = p.id WHERE d.id = ?").get(id);
 }
 
 export function createDeployment(d: { modelId: string; providerId: string; modelName: string; order?: number; timeout?: number; maxRetries?: number }) {

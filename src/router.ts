@@ -4,6 +4,7 @@ interface Deployment {
   id: string; modelId: string; providerId: string; modelName: string;
   order: number; timeout: number; maxRetries: number; enabled: number;
   providerName: string; baseUrl: string; apiKey: string; apiType: string;
+  customHeaders?: string; // JSON string of custom headers
 }
 
 export interface RouteTrace {
@@ -95,6 +96,14 @@ async function forwardRequest(deployment: Deployment, inboundPath: string, metho
 
   const url = `${deployment.baseUrl.replace(/\/$/, "")}${outPath}`;
   const outHeaders: Record<string, string> = { "Content-Type": "application/json" };
+
+  // Apply custom headers from provider config
+  if (deployment.customHeaders) {
+    try {
+      const custom = JSON.parse(deployment.customHeaders);
+      Object.assign(outHeaders, custom);
+    } catch {}
+  }
 
   if (isProviderAnthropic) {
     outHeaders["x-api-key"] = deployment.apiKey;
