@@ -134,36 +134,60 @@ async function tryDeployment(
 
       if (resp.ok) {
         recordSuccess(dep.id, modelName);
+        const oldAvg = getStats(dep.id)?.avgLatencyMs ?? latencyMs;
+        const emaLatency = Math.round(oldAvg * 0.8 + latencyMs * 0.2);
         updateStats(dep.id, {
           totalRequests: (getStats(dep.id)?.totalRequests ?? 0) + 1,
           successCount: (getStats(dep.id)?.successCount ?? 0) + 1,
-          avgLatencyMs: latencyMs, consecutiveFails: 0, cooldownUntil: 0,
+          avgLatencyMs: emaLatency, consecutiveFails: 0, cooldownUntil: 0,
         });
-        insertLog({ model: modelName, deploymentId: dep.id, providerName: dep.providerName, status: resp.status, latencyMs });
 
         trace.steps.push({ action: "success", model: dep.modelName, provider: dep.providerName, status: resp.status, latencyMs });
         trace.finalDeployment = { provider: dep.providerName, model: dep.modelName, deploymentId: dep.id };
         trace.success = true;
         if (!trace.skipSticky) setStickyDeployment(trace.stickyKey || modelName, dep.id);
 
-        // Streaming: pass through as-is
+        // Streaming: pass through, intercept final chunk for token usage
         if (isStreaming && resp.body) {
-          return { response: new Response(resp.body, {
+          let usageData: { tokensIn: number; tokensOut: number } | null = null;
+          const transform = new TransformStream({
+            transform(chunk, controller) {
+              controller.enqueue(chunk);
+              // Try to extract usage from SSE chunks
+              try {
+                const text = new TextDecoder().decode(chunk);
+                const lines = text.split("\n").filter(l => l.startsWith("data: "));
+                for (const line of lines) {
+                  const json = JSON.parse(line.slice(6));
+                  if (json.usage) {
+                    usageData = {
+                      tokensIn: json.usage.prompt_tokens ?? json.usage.input_tokens ?? 0,
+                      tokensOut: json.usage.completion_tokens ?? json.usage.output_tokens ?? 0,
+                    };
+                  }
+                }
+              } catch {}
+            },
+            flush() {
+              insertLog({ model: modelName, deploymentId: dep.id, providerName: dep.providerName, status: resp.status, latencyMs, tokensIn: usageData?.tokensIn ?? 0, tokensOut: usageData?.tokensOut ?? 0 });
+            },
+          });
+          return { response: new Response(resp.body.pipeThrough(transform), {
             status: resp.status,
             headers: { "Content-Type": resp.headers.get("Content-Type") || "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive",
               "X-Route-Provider": dep.providerName, "X-Route-Model": dep.modelName },
           }), final: true };
         }
 
-        // Non-streaming: pass through, just extract token stats
+        // Non-streaming: extract token stats and log once
         let respBody = await resp.text();
-
+        let tokensIn = 0, tokensOut = 0;
         try {
           const parsed = JSON.parse(respBody);
-          const tokensIn = parsed.usage?.prompt_tokens ?? parsed.usage?.input_tokens ?? 0;
-          const tokensOut = parsed.usage?.completion_tokens ?? parsed.usage?.output_tokens ?? 0;
-          if (tokensIn || tokensOut) insertLog({ model: modelName, deploymentId: dep.id, providerName: dep.providerName, status: resp.status, latencyMs, tokensIn, tokensOut });
+          tokensIn = parsed.usage?.prompt_tokens ?? parsed.usage?.input_tokens ?? 0;
+          tokensOut = parsed.usage?.completion_tokens ?? parsed.usage?.output_tokens ?? 0;
         } catch {}
+        insertLog({ model: modelName, deploymentId: dep.id, providerName: dep.providerName, status: resp.status, latencyMs, tokensIn, tokensOut });
 
         return { response: new Response(respBody, { status: resp.status, headers: { "Content-Type": resp.headers.get("Content-Type") || "application/json", "X-Route-Provider": dep.providerName, "X-Route-Model": dep.modelName } }), final: true };
       }
@@ -179,7 +203,8 @@ async function tryDeployment(
       });
       trace.steps.push({ action: "fail", model: dep.modelName, provider: dep.providerName, status: resp.status, latencyMs: Date.now() - start, error: lastError.slice(0, 100) });
 
-      if (retries > 0) { retries--; await new Promise(r => setTimeout(r, 2000)); continue; }
+      const attempt = dep.maxRetries - retries;
+      if (retries > 0) { retries--; await new Promise(r => setTimeout(r, Math.min(2000 * Math.pow(2, attempt), 16000))); continue; }
       recordFailure(dep.id);
       break;
     } catch (err: any) {
@@ -192,7 +217,8 @@ async function tryDeployment(
         lastError: lastError.slice(0, 200), lastErrorAt: Date.now(),
       });
       trace.steps.push({ action: "fail", model: dep.modelName, provider: dep.providerName, status: 502, error: lastError.slice(0, 100) });
-      if (retries > 0) { retries--; await new Promise(r => setTimeout(r, 2000)); continue; }
+      const attemptErr = dep.maxRetries - retries;
+      if (retries > 0) { retries--; await new Promise(r => setTimeout(r, Math.min(2000 * Math.pow(2, attemptErr), 16000))); continue; }
       recordFailure(dep.id);
       break;
     }
@@ -251,7 +277,7 @@ function getHealthyDeployments(modelName: string, skipSticky = false, stickyKey?
     if (stickyId) {
       const stickyIdx = deps.findIndex(d => d.id === stickyId);
       if (stickyIdx > 0) {
-        const [sticky] = deps.splice(stickyIdx, 1);
+        const sticky = deps.splice(stickyIdx, 1)[0]!;
         deps.unshift(sticky);
       }
     }

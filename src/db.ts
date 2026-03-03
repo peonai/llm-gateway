@@ -38,6 +38,7 @@ export function getDb(): DbLike {
     // Clean up orphaned deployment_stats
     try { db.exec("DELETE FROM deployment_stats WHERE deploymentId NOT IN (SELECT id FROM deployments)"); } catch {}
     initSchema();
+    initChainSchema();
   }
   return db;
 }
@@ -112,6 +113,8 @@ function initSchema() {
 export function uuid(): string {
   return randomUUID();
 }
+
+let lastLogPrune = 0;
 
 // --- Provider CRUD ---
 export function listProviders() {
@@ -275,8 +278,12 @@ export function insertLog(log: { model: string; deploymentId: string; providerNa
   getDb().query("INSERT INTO request_logs (id, model, deploymentId, providerName, status, latencyMs, tokensIn, tokensOut, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
     id, log.model, log.deploymentId, log.providerName, log.status, log.latencyMs, log.tokensIn ?? 0, log.tokensOut ?? 0, log.error ?? null
   );
-  // prune old logs (keep 500)
-  getDb().query("DELETE FROM request_logs WHERE id NOT IN (SELECT id FROM request_logs ORDER BY createdAt DESC LIMIT 500)").run();
+  // prune old logs (keep 7 days, throttled to once per minute)
+  const now = Date.now();
+  if (now - lastLogPrune > 60_000) {
+    lastLogPrune = now;
+    getDb().query("DELETE FROM request_logs WHERE createdAt < ?").run(now - 7 * 86400_000);
+  }
 }
 
 export function listLogs(limit = 100, offset = 0, filters?: { model?: string; status?: string; provider?: string }) {
@@ -399,29 +406,24 @@ export function initChainSchema() {
 }
 
 export function listChains() {
-  initChainSchema();
   return getDb().query("SELECT * FROM fallback_chains ORDER BY name").all();
 }
 
 export function getChain(id: string) {
-  initChainSchema();
   return getDb().query("SELECT * FROM fallback_chains WHERE id = ?").get(id);
 }
 
 export function getChainByName(name: string) {
-  initChainSchema();
   return getDb().query("SELECT * FROM fallback_chains WHERE name = ? AND enabled = 1").get(name);
 }
 
 export function createChain(p: { name: string; mode: string; items: string }) {
-  initChainSchema();
   const id = uuid();
   getDb().query("INSERT INTO fallback_chains (id, name, mode, items) VALUES (?, ?, ?, ?)").run(id, p.name, p.mode, p.items);
   return getChain(id);
 }
 
 export function updateChain(id: string, p: { name?: string; mode?: string; items?: string; enabled?: number }) {
-  initChainSchema();
   const existing: any = getChain(id);
   if (!existing) return null;
   getDb().query("UPDATE fallback_chains SET name=?, mode=?, items=?, enabled=? WHERE id=?").run(
@@ -432,6 +434,5 @@ export function updateChain(id: string, p: { name?: string; mode?: string; items
 }
 
 export function deleteChain(id: string) {
-  initChainSchema();
   getDb().query("DELETE FROM fallback_chains WHERE id = ?").run(id);
 }

@@ -18,6 +18,10 @@ const app = new Hono();
 // CORS
 app.use("*", cors());
 
+// Health check
+const startedAt = Date.now();
+app.get("/health", (c) => c.json({ ok: true, uptimeMs: Date.now() - startedAt }));
+
 // Management API (no auth for local UI)
 app.route("/api", api);
 
@@ -104,7 +108,7 @@ app.get("/v1/models", (c) => {
 });
 
 // Static files (UI)
-app.use("/ui/*", serveStatic({ root: "./public", rewriteRequestPath: (path) => path.replace("/ui", "") }));
+app.use("/ui/*", serveStatic({ root: "./public", rewriteRequestPath: (path: string) => path.replace("/ui", "") }));
 app.get("/ui", serveStatic({ root: "./public", path: "/index.html" }));
 
 // Root redirect
