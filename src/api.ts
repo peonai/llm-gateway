@@ -12,11 +12,15 @@ api.get("/providers/:id", (c) => {
 });
 api.post("/providers", async (c) => {
   const body = await c.req.json();
-  const p = db.createProvider({ name: body.name, baseUrl: body.baseUrl, apiKey: body.apiKey || "", apiType: body.apiType || "openai" });
+  // Normalize: strip trailing / and /v1 from baseUrl
+  const baseUrl = (body.baseUrl || "").replace(/\/+$/, "").replace(/\/v1$/, "");
+  const p = db.createProvider({ name: body.name, baseUrl, apiKey: body.apiKey || "", apiType: body.apiType || "openai" });
   return c.json(p, 201);
 });
 api.put("/providers/:id", async (c) => {
   const body = await c.req.json();
+  // Normalize baseUrl if provided
+  if (body.baseUrl) body.baseUrl = body.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
   const p = db.updateProvider(c.req.param("id"), body);
   return p ? c.json(p) : c.json({ error: "not found" }, 404);
 });
@@ -31,12 +35,11 @@ api.post("/providers/:id/test", async (c) => {
   if (!p) return c.json({ error: "not found" }, 404);
   try {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    let baseUrl = p.baseUrl.replace(/\/$/, "");
+    const baseUrl = p.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
 
     if (p.apiType === "anthropic") {
       headers["x-api-key"] = p.apiKey;
       headers["anthropic-version"] = "2023-06-01";
-      // Anthropic doesn't have /models endpoint, just test with a minimal message
       const url = `${baseUrl}/v1/messages`;
       const resp = await fetch(url, {
         method: "POST",
@@ -46,12 +49,8 @@ api.post("/providers/:id/test", async (c) => {
       });
       return c.json({ ok: resp.ok, status: resp.status, message: resp.ok ? "Connection successful" : await resp.text().then(t => t.slice(0, 200)) });
     } else {
-      // Auto-handle /v1 path for OpenAI-type providers
-      if (!baseUrl.endsWith("/v1")) {
-        baseUrl += "/v1";
-      }
       headers["Authorization"] = `Bearer ${p.apiKey}`;
-      const url = `${baseUrl}/models`;
+      const url = `${baseUrl}/v1/models`;
       const resp = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
       return c.json({ ok: resp.ok, status: resp.status, message: resp.ok ? "Connection successful" : await resp.text().then(t => t.slice(0, 200)) });
     }
@@ -65,12 +64,8 @@ api.post("/providers/:id/fetch-models", async (c) => {
   const p: any = db.getProvider(c.req.param("id"));
   if (!p) return c.json({ error: "not found" }, 404);
   try {
-    let baseUrl = p.baseUrl.replace(/\/$/, "");
-    // Auto-handle /v1 path for OpenAI-type providers
-    if (p.apiType !== "anthropic" && !baseUrl.endsWith("/v1")) {
-      baseUrl += "/v1";
-    }
-    const url = `${baseUrl}/models`;
+    const baseUrl = p.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+    const url = `${baseUrl}/v1/models`;
     const headers: Record<string, string> = {};
     if (p.apiType === "anthropic") {
       headers["x-api-key"] = p.apiKey;
