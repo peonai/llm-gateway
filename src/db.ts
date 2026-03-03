@@ -33,6 +33,10 @@ export function getDb(): DbLike {
     // Migrations
     try { db.exec("ALTER TABLE providers ADD COLUMN tags TEXT NOT NULL DEFAULT ''"); } catch {}
     try { db.exec("ALTER TABLE providers ADD COLUMN customHeaders TEXT NOT NULL DEFAULT '{}'"); } catch {}
+    // Update 16s timeout to 32s
+    try { db.exec("UPDATE deployments SET timeout = 32 WHERE timeout = 16"); } catch {}
+    // Clean up orphaned deployment_stats
+    try { db.exec("DELETE FROM deployment_stats WHERE deploymentId NOT IN (SELECT id FROM deployments)"); } catch {}
     initSchema();
   }
   return db;
@@ -161,7 +165,51 @@ export function updateModel(id: string, name: string) {
 }
 
 export function deleteModel(id: string) {
+  // Get all deployments for this model before deletion
+  const deployments = listDeployments(id) as any[];
+  const deploymentIds = deployments.map(d => d.id);
+
+  // Delete the model (cascades to deployments due to foreign key)
   getDb().query("DELETE FROM models WHERE id = ?").run(id);
+
+  // Clean up deployment_stats for removed deployments
+  for (const depId of deploymentIds) {
+    getDb().query("DELETE FROM deployment_stats WHERE deploymentId = ?").run(depId);
+  }
+
+  // Get the model name to clean up chains
+  const modelName = deployments[0]?.modelName;
+  if (modelName) {
+    // Clean up chain references
+    const chains = listChains() as any[];
+    for (const chain of chains) {
+      try {
+        const items = JSON.parse(chain.items);
+        let modified = false;
+
+        if (chain.mode === "models" && Array.isArray(items)) {
+          // Remove model name from models array
+          const filtered = items.filter((m: string) => m !== modelName);
+          if (filtered.length !== items.length) {
+            updateChain(chain.id, { items: JSON.stringify(filtered) });
+            modified = true;
+          }
+        } else if (chain.mode === "provider" && Array.isArray(items)) {
+          // Remove model from provider items
+          for (const item of items) {
+            if (item.models && Array.isArray(item.models)) {
+              const originalLength = item.models.length;
+              item.models = item.models.filter((m: string) => m !== modelName);
+              if (item.models.length !== originalLength) modified = true;
+            }
+          }
+          if (modified) {
+            updateChain(chain.id, { items: JSON.stringify(items) });
+          }
+        }
+      } catch {}
+    }
+  }
 }
 
 // --- Deployment CRUD ---

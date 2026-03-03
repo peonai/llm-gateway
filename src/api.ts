@@ -31,12 +31,13 @@ api.post("/providers/:id/test", async (c) => {
   if (!p) return c.json({ error: "not found" }, 404);
   try {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    let url = `${p.baseUrl.replace(/\/$/, "")}/v1/models`;
+    let baseUrl = p.baseUrl.replace(/\/$/, "");
+
     if (p.apiType === "anthropic") {
       headers["x-api-key"] = p.apiKey;
       headers["anthropic-version"] = "2023-06-01";
       // Anthropic doesn't have /models endpoint, just test with a minimal message
-      url = `${p.baseUrl.replace(/\/$/, "")}/v1/messages`;
+      const url = `${baseUrl}/v1/messages`;
       const resp = await fetch(url, {
         method: "POST",
         headers,
@@ -45,7 +46,12 @@ api.post("/providers/:id/test", async (c) => {
       });
       return c.json({ ok: resp.ok, status: resp.status, message: resp.ok ? "Connection successful" : await resp.text().then(t => t.slice(0, 200)) });
     } else {
+      // Auto-handle /v1 path for OpenAI-type providers
+      if (!baseUrl.endsWith("/v1")) {
+        baseUrl += "/v1";
+      }
       headers["Authorization"] = `Bearer ${p.apiKey}`;
+      const url = `${baseUrl}/models`;
       const resp = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
       return c.json({ ok: resp.ok, status: resp.status, message: resp.ok ? "Connection successful" : await resp.text().then(t => t.slice(0, 200)) });
     }
@@ -59,7 +65,12 @@ api.post("/providers/:id/fetch-models", async (c) => {
   const p: any = db.getProvider(c.req.param("id"));
   if (!p) return c.json({ error: "not found" }, 404);
   try {
-    const url = `${p.baseUrl.replace(/\/$/, "")}/v1/models`;
+    let baseUrl = p.baseUrl.replace(/\/$/, "");
+    // Auto-handle /v1 path for OpenAI-type providers
+    if (p.apiType !== "anthropic" && !baseUrl.endsWith("/v1")) {
+      baseUrl += "/v1";
+    }
+    const url = `${baseUrl}/models`;
     const headers: Record<string, string> = {};
     if (p.apiType === "anthropic") {
       headers["x-api-key"] = p.apiKey;
