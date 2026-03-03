@@ -196,6 +196,19 @@ body {
 .status-warn { color: var(--amber); }
 
 /* Modal */
+.dep-dropdown-item {
+  padding: 6px 10px; font-size: 11px; cursor: pointer;
+  color: var(--text); font-family: var(--font); transition: background 0.1s;
+}
+.dep-dropdown-item:hover, .dep-dropdown-item.active {
+  background: var(--bg-card-hover); color: var(--green);
+}
+.dep-dropdown-item.hidden { display: none; }
+.dep-dropdown-empty {
+  padding: 10px; font-size: 11px; color: var(--text-dim); text-align: center;
+}
+#sticky-dep-dropdown::-webkit-scrollbar { width: 4px; }
+#sticky-dep-dropdown::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 .modal-overlay {
   display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
@@ -569,7 +582,12 @@ body {
       <div id="sticky-manual" style="display:flex;gap:6px;align-items:center;flex-shrink:0">
         <span style="font-size:10px;color:var(--text-dim)">Pin:</span>
         <select id="sticky-model-select" style="padding:4px 8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:var(--font);max-width:160px"></select>
-        <select id="sticky-dep-select" style="padding:4px 8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:var(--font);max-width:220px"></select>
+        <div id="sticky-dep-select-wrap" style="position:relative;display:inline-block;min-width:220px;max-width:320px">
+          <input id="sticky-dep-input" type="text" placeholder="Select deployment..." autocomplete="off"
+            style="width:100%;padding:4px 8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:var(--font);cursor:pointer" />
+          <div id="sticky-dep-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:240px;overflow-y:auto;background:var(--bg-card);border:1px solid var(--border);border-top:none;border-radius:0 0 4px 4px;z-index:50"></div>
+          <input type="hidden" id="sticky-dep-value" />
+        </div>
         <input id="sticky-ttl-input" type="number" min="1" max="1440" value="120" title="Duration in minutes" style="width:52px;padding:4px 6px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:var(--font);text-align:center" />
         <span style="font-size:10px;color:var(--text-dim)">min</span>
         <button onclick="manualSticky()" style="padding:4px 10px;background:var(--green);border:none;border-radius:4px;color:var(--bg);cursor:pointer;font-size:10px;font-weight:600">⚡ Pin</button>
@@ -1968,12 +1986,14 @@ async function loadStickySelects() {
 async function loadStickyDeps() {
   const sel = document.getElementById("sticky-model-select");
   const opt = sel.selectedOptions[0];
-  const ds = document.getElementById("sticky-dep-select");
-  if (!opt || !opt.value) { ds.innerHTML = '<option value="">Select deployment...</option>'; return; }
+  const input = document.getElementById("sticky-dep-input");
+  const dropdown = document.getElementById("sticky-dep-dropdown");
+  const hiddenVal = document.getElementById("sticky-dep-value");
+  input.value = ""; hiddenVal.value = ""; dropdown.innerHTML = ""; dropdown.style.display = "none";
+  if (!opt || !opt.value) { return; }
   const deps = await fetch(API+"/deployments").then(r=>r.json());
   let filtered;
   if (opt.dataset.type === "chain") {
-    // Show all deployments for models in this chain
     let chainModels = [];
     try { chainModels = JSON.parse(opt.dataset.items || "[]"); } catch {}
     const models = await fetch(API+"/models").then(r=>r.json());
@@ -1982,13 +2002,53 @@ async function loadStickyDeps() {
   } else {
     filtered = deps.filter(d => d.modelId === opt.value);
   }
-  ds.innerHTML = '<option value="">Select deployment...</option>' + filtered.map(d => `<option value="${d.id}">${esc(d.providerName)} / ${esc(d.modelName)}</option>`).join("");
+  window._stickyDepItems = filtered;
+  renderDepDropdown(filtered);
 }
+function renderDepDropdown(items) {
+  const dropdown = document.getElementById("sticky-dep-dropdown");
+  if (!items.length) {
+    dropdown.innerHTML = '<div class="dep-dropdown-empty">No deployments</div>';
+    return;
+  }
+  dropdown.innerHTML = items.map(d => `<div class="dep-dropdown-item" data-id="${d.id}" data-label="${esc(d.providerName)} / ${esc(d.modelName)}">${esc(d.providerName)} / ${esc(d.modelName)}</div>`).join("");
+  dropdown.querySelectorAll(".dep-dropdown-item").forEach(el => {
+    el.addEventListener("click", () => {
+      document.getElementById("sticky-dep-input").value = el.dataset.label;
+      document.getElementById("sticky-dep-value").value = el.dataset.id;
+      dropdown.style.display = "none";
+    });
+  });
+}
+(function initDepSearch() {
+  const input = document.getElementById("sticky-dep-input");
+  const dropdown = document.getElementById("sticky-dep-dropdown");
+  input.addEventListener("focus", () => { if (dropdown.children.length) dropdown.style.display = "block"; });
+  input.addEventListener("input", () => {
+    const q = input.value.toLowerCase();
+    let visible = 0;
+    dropdown.querySelectorAll(".dep-dropdown-item").forEach(el => {
+      const match = el.dataset.label.toLowerCase().includes(q);
+      el.classList.toggle("hidden", !match);
+      if (match) visible++;
+    });
+    const empty = dropdown.querySelector(".dep-dropdown-empty");
+    if (empty) empty.remove();
+    if (!visible) {
+      const e = document.createElement("div"); e.className = "dep-dropdown-empty"; e.textContent = "No match";
+      dropdown.appendChild(e);
+    }
+    dropdown.style.display = "block";
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#sticky-dep-select-wrap")) dropdown.style.display = "none";
+  });
+})();
 async function manualSticky() {
   const modelSel = document.getElementById("sticky-model-select");
   const opt = modelSel.selectedOptions[0];
   const modelName = opt?.dataset?.name || "";
-  const deploymentId = document.getElementById("sticky-dep-select").value;
+  const deploymentId = document.getElementById("sticky-dep-value").value;
   if (!modelName || !deploymentId) { toast("Select target and deployment"); return; }
   const rawMin = parseInt(document.getElementById("sticky-ttl-input").value, 10);
   const minutes = (!isNaN(rawMin) && rawMin > 0) ? rawMin : 120;
