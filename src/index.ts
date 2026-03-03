@@ -20,4 +20,11 @@ if (!isBun) {
 }
 
 // Bun uses this default export
-export default { port: PORT, fetch: app.fetch };
+export default { 
+  port: PORT, 
+  fetch: app.fetch,
+  // Bun enforces a maximum of 255 seconds, use 5 minutes only when
+  // running under Node/tsx. 255 is roughly 4.25 minutes which is close
+  // enough.
+  idleTimeout: 255
+};
