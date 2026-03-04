@@ -31,6 +31,10 @@ api.put("/providers/:id", async (c) => {
   const body = await c.req.json();
   // Normalize baseUrl if provided
   if (body.baseUrl) body.baseUrl = body.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+  // If apiKey looks masked (contains "..."), don't update it
+  if (body.apiKey && body.apiKey.includes("...")) {
+    delete body.apiKey;
+  }
   const p = db.updateProvider(c.req.param("id"), body);
   return p ? c.json(maskProvider(p)) : c.json({ error: "not found" }, 404);
 });
