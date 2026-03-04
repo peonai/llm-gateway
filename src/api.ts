@@ -191,8 +191,7 @@ export default api;
 
 // --- API Keys ---
 api.get("/keys", (c) => {
-  const keys = (db.listApiKeys() as any[]).map(k => ({ ...k, key: `${k.key.slice(0, 6)}...${k.key.slice(-4)}` }));
-  return c.json(keys);
+  return c.json(db.listApiKeys());
 });
 
 api.post("/keys", async (c) => {

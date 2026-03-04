@@ -13,6 +13,7 @@
     "start:node": "tsx src/index.ts"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/bun": "latest",
     "playwright": "^1.58.2",
     "tsx": "^4"
