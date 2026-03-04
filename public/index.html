@@ -555,6 +555,23 @@ body {
 </head>
 <body>
 
+<!-- Auth overlay -->
+<div id="auth-overlay" style="display:flex; position:fixed; inset:0; z-index:9999; background:var(--bg); align-items:center; justify-content:center; flex-direction:column;">
+  <div style="text-align:center; max-width:360px; width:100%; padding:24px;">
+    <div style="font-size:24px; font-weight:700; color:var(--green); margin-bottom:8px; text-shadow:0 0 20px rgba(0,255,136,0.3);">LLM<span style="color:var(--text-dim);font-weight:400">/</span>Gateway</div>
+    <div style="color:var(--text-dim); margin-bottom:32px; font-size:12px;">管理面板需要认证</div>
+    <input id="admin-key-input" type="password" placeholder="Admin Key"
+      style="width:100%; padding:12px 16px; background:var(--bg-input); border:1px solid var(--border); border-radius:var(--radius); color:var(--text); font-family:var(--font); font-size:13px; outline:none; margin-bottom:12px;"
+      onkeydown="if(event.key==='Enter')attemptLogin()"
+      autocomplete="off" spellcheck="false">
+    <button onclick="attemptLogin()"
+      style="width:100%; padding:10px; background:var(--green); color:#000; border:none; border-radius:var(--radius); font-family:var(--font); font-size:13px; font-weight:600; cursor:pointer; letter-spacing:0.5px;">
+      AUTHENTICATE
+    </button>
+    <div id="auth-error" style="color:var(--red); margin-top:12px; font-size:12px; min-height:18px;"></div>
+  </div>
+</div>
+
 <nav class="nav">
   <div class="nav-logo">LLM<span>/</span>Gateway</div>
   <div class="nav-tabs">
@@ -569,6 +586,7 @@ body {
   </div>
   <div class="nav-right">
     <div class="status-dot"></div>
+    <button onclick="logout()" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:4px 10px;border-radius:var(--radius);font-family:var(--font);font-size:11px;cursor:pointer;" title="Logout">⏻</button>
     <span style="color:var(--text-dim);font-size:11px;opacity:0.8">v1.0.0</span>
   </div>
 </nav>
@@ -940,6 +958,117 @@ body {
 const API = '/api';
 let autoRefresh = true;
 const MODEL_COLORS = ['#00ff88','#4488ff','#ffaa00','#aa66ff','#00ccff','#ff3355','#ff88aa','#88ff00'];
+
+// --- Auth layer ---
+const AUTH_STORAGE_KEY = 'llm_gw_admin_key';
+const AUTH_EXPIRY_KEY = 'llm_gw_admin_key_expiry';
+const AUTH_TTL_MS = 48 * 60 * 60 * 1000; // 48 hours
+
+function getStoredKey() {
+  const key = localStorage.getItem(AUTH_STORAGE_KEY);
+  const expiry = localStorage.getItem(AUTH_EXPIRY_KEY);
+  if (key && expiry && Date.now() < parseInt(expiry)) return key;
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+  localStorage.removeItem(AUTH_EXPIRY_KEY);
+  return null;
+}
+
+function storeKey(key) {
+  localStorage.setItem(AUTH_STORAGE_KEY, key);
+  localStorage.setItem(AUTH_EXPIRY_KEY, String(Date.now() + AUTH_TTL_MS));
+}
+
+function clearStoredKey() {
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+  localStorage.removeItem(AUTH_EXPIRY_KEY);
+}
+
+// Wrap global fetch to inject admin key header
+const _originalFetch = window.fetch;
+window.fetch = function(url, opts = {}) {
+  const adminKey = getStoredKey();
+  if (adminKey && typeof url === 'string' && url.startsWith(API)) {
+    opts.headers = { ...(opts.headers || {}), 'x-admin-key': adminKey };
+  }
+  return _originalFetch.call(this, url, opts);
+};
+
+function showLoginScreen() {
+  document.getElementById('auth-overlay').style.display = 'flex';
+  document.querySelector('.nav').style.display = 'none';
+  document.querySelector('.main').style.display = 'none';
+  setTimeout(() => document.getElementById('admin-key-input')?.focus(), 100);
+}
+
+function hideLoginScreen() {
+  document.getElementById('auth-overlay').style.display = 'none';
+  document.querySelector('.nav').style.display = '';
+  document.querySelector('.main').style.display = '';
+}
+
+async function attemptLogin() {
+  const input = document.getElementById('admin-key-input');
+  const errEl = document.getElementById('auth-error');
+  const key = input.value.trim();
+  if (!key) { errEl.textContent = 'Please enter the admin key'; return; }
+
+  try {
+    const resp = await _originalFetch(API + '/auth/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
+    });
+    if (resp.ok) {
+      storeKey(key);
+      hideLoginScreen();
+      errEl.textContent = '';
+      bootDashboard();
+    } else {
+      errEl.textContent = 'Invalid admin key';
+      input.value = '';
+      input.focus();
+    }
+  } catch (e) {
+    errEl.textContent = 'Connection error';
+  }
+}
+
+function logout() {
+  clearStoredKey();
+  showLoginScreen();
+}
+
+async function checkAuth() {
+  // First check if auth is even required
+  const resp = await _originalFetch(API + '/auth/verify', { method: 'POST' });
+  if (resp.ok) {
+    // No auth required (ADMIN_KEY not set), proceed directly
+    hideLoginScreen();
+    bootDashboard();
+    return;
+  }
+
+  // Auth required — check stored key
+  const key = getStoredKey();
+  if (key) {
+    const resp2 = await _originalFetch(API + '/auth/verify', {
+      method: 'POST',
+      headers: { 'x-admin-key': key },
+    });
+    if (resp2.ok) {
+      hideLoginScreen();
+      bootDashboard();
+      return;
+    }
+    clearStoredKey();
+  }
+  showLoginScreen();
+}
+
+function bootDashboard() {
+  loadDashboard(); loadProviders(); loadModels(); loadChains();
+  const h = location.hash.slice(1);
+  if (h) switchTab(h);
+}
 
 // --- Nav ---
 function switchTab(page) {
@@ -2088,12 +2217,10 @@ async function loadLastRequest() {
   </div>`;
 }
 
-// Init
-const initTab = location.hash.slice(1);
-if (initTab && document.getElementById('page-' + initTab)) { switchTab(initTab); } else { switchTab('dashboard'); }
-loadDashboard(); loadLastRequest(); loadStickyRoutes(); loadStickySelects(); loadProviders(); loadModels(); loadKeys(); loadChains();
+// Init — go through auth check first
+checkAuth();
 setInterval(() => {
-  if (!autoRefresh) return;
+  if (!autoRefresh || !getStoredKey()) return;
   const p = document.querySelector('.page.active')?.id;
   if (p==='page-dashboard') { loadDashboard(); loadLastRequest(); loadStickyRoutes(); }
   else if (p==='page-logs') loadLogs();

@@ -4,6 +4,10 @@ import { getCooldownInfo, routeTestDirect, getStickyInfo, clearStickyRoute, setS
 
 const api = new Hono();
 
+// Auth verification endpoint (used by UI login screen)
+// Returns 200 if auth passes (middleware already validated), or if no ADMIN_KEY is set
+api.post("/auth/verify", (c) => c.json({ ok: true }));
+
 // Mask sensitive fields in provider responses
 function maskProvider(p: any) {
   if (!p) return p;
