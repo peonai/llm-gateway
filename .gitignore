@@ -40,3 +40,6 @@ gateway.db*
 
 # design notes
 DESIGN.md
+
+# pm2 ecosystem config (contains ADMIN_KEY)
+ecosystem.config.cjs

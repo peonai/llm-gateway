@@ -5,12 +5,13 @@ Lightweight LLM API gateway with multi-provider routing, automatic fallback chai
 ## Features
 
 - Multi-provider support (OpenAI, Anthropic, and compatible APIs)
-- Automatic fallback with health-based routing
+- Automatic fallback with health-based routing and exponential backoff
 - Sticky routing — successful deployments are preferred for 2 hours (configurable)
-- Fallback chains with visual builder
+- Fallback chains with visual builder (models or provider-based)
 - API key management with per-key model restrictions
-- Request logging and analytics dashboard
-- Protocol auto-conversion (OpenAI ↔ Anthropic)
+- Admin authentication for management API
+- Request logging with 7-day retention and analytics dashboard
+- EMA-based latency tracking for accurate performance metrics
 
 ## Why I Built This
 
@@ -36,35 +37,87 @@ npm run dev:node
 
 Open `http://localhost:3456/ui` to access the management dashboard.
 
+## Authentication
+
+### Management API (`/api/*`)
+
+Protected by `ADMIN_KEY` environment variable. If not set, the management API is open (suitable for local-only access).
+
+```bash
+# Set admin key
+export ADMIN_KEY="your-secret-key"
+
+# Access with header
+curl -H "x-admin-key: $ADMIN_KEY" http://localhost:3456/api/providers
+
+# Or via Authorization header
+curl -H "Authorization: Bearer $ADMIN_KEY" http://localhost:3456/api/providers
+
+# Or via query parameter (for browser/UI access)
+curl "http://localhost:3456/api/providers?admin_key=$ADMIN_KEY"
+```
+
+### Proxy Endpoints (`/v1/*`)
+
+Protected by gateway API keys (prefix `gw-`). Create keys via the management UI or API.
+
+- If **no API keys exist**: proxy is open (initial setup mode)
+- If **API keys exist**: every proxy request must include a valid `gw-` key
+
+```bash
+# Via Authorization header
+curl -H "Authorization: Bearer gw-xxxxx" http://localhost:3456/v1/messages
+
+# Via x-api-key header (Anthropic-style)
+curl -H "x-api-key: gw-xxxxx" http://localhost:3456/v1/messages
+```
+
+Keys support per-key model restrictions and usage tracking.
+
+### Health Check
+
+`GET /health` — always accessible, no auth required. Returns `{ ok: true, uptimeMs: <ms> }`.
+
+## Production Deployment (pm2)
+
+```bash
+# Using ecosystem config
+pm2 start ecosystem.config.cjs
+
+# Or manually with env
+ADMIN_KEY=your-key pm2 start "npx tsx src/index.ts" --name llm-gateway
+```
+
 ## For AI Agents
 
-If you're an AI agent with tool access and need to add a new LLM provider to this gateway, read `llms.txt` at the gateway URL for the full API reference:
+If you're an AI agent with tool access, read `llms.txt` at the gateway URL for the full API reference:
 
 ```
-Read http://<gateway-host>:<port>/llms.txt and use the management API to add providers, models, and deployments.
+Read http://<gateway-host>:<port>/llms.txt
 ```
-
-That's it — one line in your system prompt, and the agent can self-configure the gateway.
-
 
 ## Configuration
 
-Set the port via environment variable:
+Set port and admin key via environment variables:
 
 ```bash
-PORT=8080 bun run dev
-PORT=8080 npm run dev:node
+PORT=3456 ADMIN_KEY=your-secret npm run dev:node
 ```
 
 ## API Endpoints
 
-| Endpoint | Description |
-|---|---|
-| `POST /v1/chat/completions` | OpenAI-compatible proxy |
-| `POST /v1/messages` | Anthropic-compatible proxy |
-| `GET /v1/models` | List available models |
-| `GET /api/stats` | Gateway statistics |
-| `/ui` | Management dashboard |
+| Endpoint | Auth | Description |
+|---|---|---|
+| `GET /health` | None | Health check |
+| `POST /v1/chat/completions` | API Key (`gw-`) | OpenAI-compatible proxy |
+| `POST /v1/messages` | API Key (`gw-`) | Anthropic-compatible proxy |
+| `GET /v1/models` | None | List available models |
+| `GET /api/providers` | Admin Key | List providers |
+| `GET /api/stats` | Admin Key | Gateway statistics + sticky info |
+| `GET /api/logs` | Admin Key | Request logs |
+| `POST /api/sticky` | Admin Key | Pin deployment to model |
+| `GET /api/chains` | Admin Key | List fallback chains |
+| `/ui` | None (local) | Management dashboard |
 
 ## License
 

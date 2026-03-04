@@ -2,54 +2,104 @@
 
 > Lightweight LLM API gateway with multi-provider routing, automatic fallback, and sticky routing.
 
-## What It Does
+## Authentication
 
-Sits between your app and multiple LLM providers. Routes requests, retries on failure, sticks to working deployments, converts between OpenAI and Anthropic protocols automatically.
+### Management API (/api/*)
+Requires admin key when ADMIN_KEY env var is set.
+Pass via: `x-admin-key` header, `Authorization: Bearer <key>`, or `?admin_key=<key>` query param.
+
+### Proxy Endpoints (/v1/*)
+Requires a gateway API key (prefix `gw-`) when any API keys exist.
+Pass via: `Authorization: Bearer gw-xxx` or `x-api-key: gw-xxx`.
+If no API keys exist, proxy is open (setup mode).
+
+### Health Check
+GET /health — no auth, always accessible.
 
 ## API (Management)
 
 Base: http://localhost:3456/api
 
 ### Providers
-- GET /api/providers — list all providers
+- GET /api/providers — list all providers (apiKeys are masked in response)
 - POST /api/providers — create provider { name, baseUrl, apiKey, apiType: "openai"|"anthropic" }
 - PUT /api/providers/:id — update provider
 - DELETE /api/providers/:id — delete provider
+- POST /api/providers/:id/test — test provider connection
 - POST /api/providers/:id/fetch-models — auto-discover models from provider
 
 ### Models
-- GET /api/models — list all models
+- GET /api/models — list all models (includes deployments)
 - POST /api/models — create model { name }
-- PUT /api/models/:id — update model
-- DELETE /api/models/:id — delete model
+- PUT /api/models/:id — update model { name }
+- DELETE /api/models/:id — delete model (cascades to deployments, cleans chains)
 
 ### Deployments (model → provider binding)
 - GET /api/deployments — list all deployments
-- POST /api/deployments — create { modelId, providerId, modelName, order, timeout, maxRetries, enabled }
-- PUT /api/deployments/:id — update deployment
+- POST /api/deployments — create { modelId, providerId, modelName, order, timeout, maxRetries }
+- PUT /api/deployments/:id — update { order, timeout, maxRetries, enabled (0|1), modelName }
 - DELETE /api/deployments/:id — delete deployment
 
 ### Chains (fallback sequences)
 - GET /api/chains — list chains
-- POST /api/chains — create { name, mode: "models"|"provider", items: JSON }
-- PUT /api/chains/:id — update chain
+- POST /api/chains — create { name, mode: "models"|"provider", items: JSON string }
+- PUT /api/chains/:id — update chain { name, mode, items, enabled }
 - DELETE /api/chains/:id — delete chain
+
+Chain modes:
+- "models": items = ["model-name-1", "model-name-2"] — tries each model in order
+- "provider": items = [{"provider": "name", "models": ["m1","m2"]}, ...] — tries specific models from specific providers
 
 ### Sticky/Pin
 - POST /api/sticky — pin deployment { modelName, deploymentId, ttlMs? }
-- DELETE /api/sticky/:model — clear sticky for model/chain
-- DELETE /api/sticky — clear all
+- DELETE /api/sticky/:model — clear sticky for model/chain (URL-encode model name)
+- DELETE /api/sticky — clear all sticky routes
 
-### Proxy (LLM requests)
-- POST /v1/chat/completions — OpenAI-compatible
-- POST /v1/messages — Anthropic-compatible
+Sticky behavior:
+- Stored in memory (lost on restart)
+- Default TTL: 2 hours
+- Manual pin (via POST) takes priority over auto-sticky
+- Chain-level sticky uses chain name as key
 
-Model name in request maps to a model or chain name in the gateway.
+### API Keys
+- GET /api/keys — list all keys (full key visible for copy)
+- POST /api/keys — create { name, rateLimit?, allowedModels?: "model1,model2" }
+- PUT /api/keys/:id — update { name, enabled, rateLimit, allowedModels }
+- DELETE /api/keys/:id — delete key
+
+### Stats & Logs
+- GET /api/stats — summary, deployment stats, cooldowns, sticky info
+- GET /api/logs?limit=N&offset=N&model=X&status=N&provider=X — request logs
+- GET /api/model-stats — per-model aggregated stats
+- GET /api/model-timeline?hours=24 — hourly request counts per model
+
+### Route Testing
+- POST /api/test-route — test routing { model, message?, providerId? }
+  - Without providerId: tests full routing chain (skips sticky)
+  - With providerId: direct provider test (bypasses routing)
+
+## Proxy (LLM requests)
+- POST /v1/chat/completions — OpenAI-compatible (requires gw- API key)
+- POST /v1/messages — Anthropic-compatible (requires gw- API key)
+- GET /v1/models — list models (no auth)
+
+Model name in request body maps to a model or chain name in the gateway.
+If the model name matches a chain, the gateway routes through the chain's fallback sequence.
+
+## Routing Behavior
+
+1. Check if model name matches a fallback chain
+2. If chain: try sticky deployment first, then chain items in order
+3. If no chain: try deployments for that model in priority order
+4. Each deployment: retry with exponential backoff (2s, 4s, 8s, 16s cap)
+5. After 3 consecutive failures: deployment enters cooldown (2+ minutes)
+6. On success: set auto-sticky for 2 hours, record EMA latency
 
 ## Typical Setup Flow
 
 1. Create a provider (name, baseUrl, apiKey, apiType)
 2. Fetch or manually create models
 3. Create deployments linking models to providers
-4. Optionally create a chain for fallback routing
-5. Point your app at the gateway's /v1/chat/completions or /v1/messages
+4. Create API key for your application
+5. Optionally create a chain for fallback routing
+6. Point your app at the gateway's /v1/chat/completions or /v1/messages with `Authorization: Bearer gw-xxx`

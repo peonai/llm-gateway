@@ -6,7 +6,23 @@ user-invocable: true
 
 # LLM Gateway 运维
 
-Gateway 默认地址: `http://localhost:3456`（可通过环境变量 `LLM_GATEWAY_URL` 覆盖）
+Gateway 地址: `http://localhost:3456`（可通过 `LLM_GATEWAY_URL` 环境变量覆盖）
+
+## 认证
+
+管理 API (`/api/*`) 需要 admin key。从环境变量或 `ecosystem.config.cjs` 获取：
+```bash
+ADMIN_KEY=$(node -e "console.log(require('$HOME/projects/llm-gateway/ecosystem.config.cjs').apps[0].env.ADMIN_KEY)")
+```
+
+所有 `/api/*` 请求需带 header：
+```bash
+-H "x-admin-key: $ADMIN_KEY"
+```
+
+代理端点 (`/v1/*`) 需要 `gw-` 前缀的 API key（通过管理 UI 创建）。
+
+健康检查 `GET /health` 无需认证。
 
 ## 状态检查
 
@@ -17,40 +33,41 @@ curl -s http://localhost:3456/health | jq .
 
 ### 总览统计
 ```bash
-curl -s http://localhost:3456/api/stats | jq '.summary'
+curl -s -H "x-admin-key: $ADMIN_KEY" http://localhost:3456/api/stats | jq '.summary'
 ```
 
 ### 查看所有 provider
 ```bash
-curl -s http://localhost:3456/api/providers | jq '.[] | {name, baseUrl, apiType, tags}'
+curl -s -H "x-admin-key: $ADMIN_KEY" http://localhost:3456/api/providers | jq '.[] | {name, baseUrl, apiType, tags}'
 ```
+注意：apiKey 在响应中已遮蔽（`sk-xxx...xxxx`）。
 
 ### 查看所有 deployment（含统计）
 ```bash
-curl -s http://localhost:3456/api/stats | jq '.deployments[] | {providerName, modelName, enabled, stats: {totalRequests: .stats.totalRequests, successCount: .stats.successCount, avgLatencyMs: .stats.avgLatencyMs, consecutiveFails: .stats.consecutiveFails}}'
+curl -s -H "x-admin-key: $ADMIN_KEY" http://localhost:3456/api/stats | jq '.deploymentStats'
 ```
 
 ### 查看 fallback chains
 ```bash
-curl -s http://localhost:3456/api/chains | jq '.[] | {name, mode, enabled, items: (.items | fromjson)}'
+curl -s -H "x-admin-key: $ADMIN_KEY" http://localhost:3456/api/chains | jq '.[] | {name, mode, enabled, items: (.items | fromjson)}'
 ```
 
 ### 查看最近请求日志
 ```bash
-curl -s "http://localhost:3456/api/logs?limit=20" | jq '.[] | {model, providerName, status, latencyMs, tokensIn, tokensOut, createdAt: (.createdAt / 1000 | strftime("%H:%M:%S"))}'
+curl -s -H "x-admin-key: $ADMIN_KEY" "http://localhost:3456/api/logs?limit=20" | jq '.[] | {model, providerName, status, latencyMs, tokensIn, tokensOut, createdAt: (.createdAt / 1000 | strftime("%H:%M:%S"))}'
 ```
 
 ### 查看 cooldown 状态
 ```bash
-curl -s http://localhost:3456/api/stats | jq '.cooldowns'
+curl -s -H "x-admin-key: $ADMIN_KEY" http://localhost:3456/api/stats | jq '.cooldowns'
 ```
 
 ## 路由测试
 
-### 测试路由（跳过 sticky，遍历所有 deployment）
 ```bash
 curl -s -X POST http://localhost:3456/api/test-route \
   -H "Content-Type: application/json" \
+  -H "x-admin-key: $ADMIN_KEY" \
   -d '{"model": "MODEL_NAME"}' | jq '.steps[] | {action, provider, model, status, latencyMs, error}'
 ```
 
@@ -58,98 +75,75 @@ curl -s -X POST http://localhost:3456/api/test-route \
 
 ### 启用/禁用 deployment
 ```bash
-# 禁用
 curl -s -X PUT http://localhost:3456/api/deployments/DEPLOYMENT_ID \
-  -H "Content-Type: application/json" -d '{"enabled": 0}'
-# 启用
-curl -s -X PUT http://localhost:3456/api/deployments/DEPLOYMENT_ID \
-  -H "Content-Type: application/json" -d '{"enabled": 1}'
+  -H "Content-Type: application/json" -H "x-admin-key: $ADMIN_KEY" \
+  -d '{"enabled": 0}'  # 0=禁用, 1=启用
 ```
 
 ### 更新 chain 排序
 ```bash
 curl -s -X PUT http://localhost:3456/api/chains/CHAIN_ID \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "x-admin-key: $ADMIN_KEY" \
   -d '{"items": "[\"model1\",\"model2\"]"}'
 ```
-注意：items 值是 JSON 字符串（字符串化的数组）。
 
 ## Sticky 路由管理
 
-Sticky 让 Gateway 记住上次成功的 deployment，后续请求优先走同一个。
-
 ### 查看所有 sticky
 ```bash
-curl -s http://localhost:3456/api/stats | jq '.sticky'
+curl -s -H "x-admin-key: $ADMIN_KEY" http://localhost:3456/api/stats | jq '.sticky'
 ```
-或使用 CLI 工具：
+或使用 CLI：
 ```bash
 node sticky.js
-```
-
-### 查看指定模型的 sticky
-```bash
-node sticky.js <model-name>
 ```
 
 ### 手动设置 sticky
 ```bash
 node sticky.js set <model-name> <deployment-id> [ttl-ms]
 ```
-等效 API：
-```
-POST /api/sticky
-{"modelName": "<model>", "deploymentId": "<id>", "ttlMs": <optional>}
-```
 
 ### 清除 sticky
 ```bash
-# 清除指定模型
-node sticky.js clear <model-name>
-# 清除全部
-node sticky.js clear
-```
-等效 API：
-```
-DELETE /api/sticky/<model-name>   (URL encode model name)
-DELETE /api/sticky                (clear all)
+node sticky.js clear [model-name]  # 不带参数清除全部
 ```
 
-### 查看所有 deployment ID（设置 sticky 时需要）
+### 查看所有 deployment ID
 ```bash
 node sticky.js deployments
 ```
 
-### Sticky 行为说明
-- 存在内存中，Gateway 重启后丢失
-- 默认 TTL: 2 小时（自动 sticky）
-- 手动设置的 sticky 优先级高于自动 sticky
-- Chain 级别的 sticky 绑定在 chain name 上，不是单个 model
+### Sticky 行为
+- 存内存，重启丢失
+- 默认 TTL 2 小时
+- 手动 pin 优先于自动 sticky
+- Chain 级别 sticky 绑定在 chain name 上
 
 ## 用户指令映射
 
-- `/sticky` 或 `查看 sticky` → 列出所有当前 sticky
-- `/sticky <model>` → 查看指定模型的 sticky
-- `/sticky set <model> <id>` → 手动设置 sticky
-- `/sticky clear [model]` → 清除 sticky
-- `gateway 状态` / `网关状态` → 执行健康检查 + 总览统计
-- `查看日志` / `最近请求` → 查看最近请求日志
-- `测试路由 <model>` → 执行路由测试
+- `/sticky` → 列出所有 sticky
+- `/sticky <model>` → 查看指定模型 sticky
+- `/sticky set <model> <id>` → 手动设置
+- `/sticky clear [model]` → 清除
+- `gateway 状态` → 健康检查 + 统计
+- `查看日志` → 最近请求日志
+- `测试路由 <model>` → 路由测试
 
 ## 进程管理
 
 ```bash
-# 重启
+# 使用 ecosystem 配置启动/重启（推荐，会加载 ADMIN_KEY）
+cd ~/projects/llm-gateway && pm2 start ecosystem.config.cjs
 pm2 restart llm-gateway
+
 # 查看日志
 pm2 logs llm-gateway --lines 50
-# 状态
-pm2 show llm-gateway
 ```
 
 ## 注意事项
 
-- Gateway 端口是 **3456**（不是 3000）
-- API 路径是 `/api/stats`（不是 `/api/status`）
-- pm2 进程名是 `llm-gateway`
-- `sticky.js` 位于本 skill 目录下，需要 Node.js 18+（原生 fetch）
+- 端口 **3456**（不是 3000）
+- API 路径 `/api/stats`（不是 `/api/status`）
+- Provider apiKey 在 API 响应中已遮蔽，不会泄露明文
+- `gw-` API key 在列表中显示完整（方便复制）
+- `sticky.js` 在本 skill 目录下，Node.js 18+
