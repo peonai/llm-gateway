@@ -2,27 +2,42 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import api from "./api";
 import { routeRequest } from "./router";
-import { getApiKeyByKey, incrementApiKeyUsage, listApiKeys } from "./db";
+import { getApiKeyByKey, incrementApiKeyUsage, listApiKeys, listModels } from "./db";
 
 const isBun = typeof globalThis.Bun !== "undefined";
 
-let serveStatic: any;
-if (isBun) {
-  serveStatic = require("hono/bun").serveStatic;
-} else {
-  serveStatic = require("@hono/node-server/serve-static").serveStatic;
-}
+const serveStatic = isBun
+  ? (await import("hono/bun")).serveStatic
+  : (await import("@hono/node-server/serve-static")).serveStatic;
 
 const app = new Hono();
 
 // CORS
 app.use("*", cors());
 
-// Health check
+// Health check (no auth needed)
 const startedAt = Date.now();
 app.get("/health", (c) => c.json({ ok: true, uptimeMs: Date.now() - startedAt }));
 
-// Management API (no auth for local UI)
+// --- Admin auth middleware for management API ---
+// Uses ADMIN_KEY env var. If not set, allows all (local dev mode).
+const ADMIN_KEY = process.env.ADMIN_KEY || "";
+
+app.use("/api/*", async (c, next) => {
+  if (!ADMIN_KEY) return next(); // No admin key configured = open mode (local only)
+
+  const auth = c.req.header("Authorization") || "";
+  const xKey = c.req.header("x-admin-key") || "";
+  const queryKey = c.req.query("admin_key") || "";
+
+  if (auth === `Bearer ${ADMIN_KEY}` || xKey === ADMIN_KEY || queryKey === ADMIN_KEY) {
+    return next();
+  }
+
+  return c.json({ error: { message: "Unauthorized: admin key required", type: "authentication_error" } }, 401);
+});
+
+// Management API
 app.route("/api", api);
 
 // --- API Key auth middleware for proxy endpoints ---
@@ -45,7 +60,8 @@ app.use("/v1/*", async (c, next) => {
   }
 
   if (!apiKey) {
-    return next(); // No gw- key, pass through (might be using provider key directly)
+    // API keys exist but none provided — reject
+    return c.json({ error: { message: "API key required. Use 'Authorization: Bearer gw-...' or 'x-api-key: gw-...'", type: "authentication_error" } }, 401);
   }
 
   const keyRecord: any = getApiKeyByKey(apiKey);
@@ -97,7 +113,6 @@ app.post("/v1/messages", async (c) => {
 
 // OpenAI models list
 app.get("/v1/models", (c) => {
-  const { listModels } = require("./db");
   const models = listModels().map((m: any) => ({
     id: m.name,
     object: "model",

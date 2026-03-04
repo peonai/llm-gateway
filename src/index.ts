@@ -15,7 +15,7 @@ console.log(`
 `);
 
 if (!isBun) {
-  const { serve } = require("@hono/node-server");
+  const { serve } = await import("@hono/node-server");
   serve({ fetch: app.fetch, port: PORT });
 }
 

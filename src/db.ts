@@ -19,30 +19,25 @@ function wrapBetterSqlite3(raw: any): DbLike {
   };
 }
 
-export function getDb(): DbLike {
-  if (!db) {
-    if (isBun) {
-      const { Database } = require("bun:sqlite");
-      db = new Database("gateway.db", { create: true });
-    } else {
-      const BetterSqlite3 = require("better-sqlite3");
-      db = wrapBetterSqlite3(new BetterSqlite3("gateway.db"));
-    }
-    db.exec("PRAGMA journal_mode = WAL");
-    db.exec("PRAGMA foreign_keys = ON");
-    // Migrations
-    try { db.exec("ALTER TABLE providers ADD COLUMN tags TEXT NOT NULL DEFAULT ''"); } catch {}
-    try { db.exec("ALTER TABLE providers ADD COLUMN customHeaders TEXT NOT NULL DEFAULT '{}'"); } catch {}
-    // Update 16s timeout to 32s
-    try { db.exec("UPDATE deployments SET timeout = 32 WHERE timeout = 16"); } catch {}
-    // Clean up orphaned deployment_stats
-    try { db.exec("DELETE FROM deployment_stats WHERE deploymentId NOT IN (SELECT id FROM deployments)"); } catch {}
-    initSchema();
-    initChainSchema();
-  }
-  return db;
+// Initialize DB with top-level await
+if (isBun) {
+  const { Database } = await import("bun:sqlite");
+  db = new Database("gateway.db", { create: true });
+} else {
+  const BetterSqlite3 = (await import("better-sqlite3")).default;
+  db = wrapBetterSqlite3(new BetterSqlite3("gateway.db"));
 }
+db.exec("PRAGMA journal_mode = WAL");
+db.exec("PRAGMA foreign_keys = ON");
+// Migrations
+try { db.exec("ALTER TABLE providers ADD COLUMN tags TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE providers ADD COLUMN customHeaders TEXT NOT NULL DEFAULT '{}'"); } catch {}
+// Update 16s timeout to 32s
+try { db.exec("UPDATE deployments SET timeout = 32 WHERE timeout = 16"); } catch {}
+// Clean up orphaned deployment_stats
+try { db.exec("DELETE FROM deployment_stats WHERE deploymentId NOT IN (SELECT id FROM deployments)"); } catch {}
 
+// Initialize schema (must be defined before calling)
 function initSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS providers (
@@ -109,6 +104,14 @@ function initSchema() {
     );
   `);
 }
+
+export function getDb(): DbLike {
+  return db;
+}
+
+// Run schema init at module load
+initSchema();
+initChainSchema();
 
 export function uuid(): string {
   return randomUUID();
@@ -392,7 +395,7 @@ export function getModelTimeline(hours: number = 24) {
 }
 
 // --- Fallback Chains ---
-export function initChainSchema() {
+function initChainSchema() {
   getDb().exec(`
     CREATE TABLE IF NOT EXISTS fallback_chains (
       id TEXT PRIMARY KEY,

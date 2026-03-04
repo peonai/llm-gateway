@@ -4,25 +4,31 @@ import { getCooldownInfo, routeTestDirect, getStickyInfo, clearStickyRoute, setS
 
 const api = new Hono();
 
+// Mask sensitive fields in provider responses
+function maskProvider(p: any) {
+  if (!p) return p;
+  return { ...p, apiKey: p.apiKey ? `${p.apiKey.slice(0, 6)}...${p.apiKey.slice(-4)}` : "" };
+}
+
 // --- Providers ---
-api.get("/providers", (c) => c.json(db.listProviders()));
+api.get("/providers", (c) => c.json((db.listProviders() as any[]).map(maskProvider)));
 api.get("/providers/:id", (c) => {
   const p = db.getProvider(c.req.param("id"));
-  return p ? c.json(p) : c.json({ error: "not found" }, 404);
+  return p ? c.json(maskProvider(p)) : c.json({ error: "not found" }, 404);
 });
 api.post("/providers", async (c) => {
   const body = await c.req.json();
   // Normalize: strip trailing / and /v1 from baseUrl
   const baseUrl = (body.baseUrl || "").replace(/\/+$/, "").replace(/\/v1$/, "");
   const p = db.createProvider({ name: body.name, baseUrl, apiKey: body.apiKey || "", apiType: body.apiType || "openai" });
-  return c.json(p, 201);
+  return c.json(maskProvider(p), 201);
 });
 api.put("/providers/:id", async (c) => {
   const body = await c.req.json();
   // Normalize baseUrl if provided
   if (body.baseUrl) body.baseUrl = body.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
   const p = db.updateProvider(c.req.param("id"), body);
-  return p ? c.json(p) : c.json({ error: "not found" }, 404);
+  return p ? c.json(maskProvider(p)) : c.json({ error: "not found" }, 404);
 });
 api.delete("/providers/:id", (c) => {
   db.deleteProvider(c.req.param("id"));
@@ -185,7 +191,7 @@ export default api;
 
 // --- API Keys ---
 api.get("/keys", (c) => {
-  const keys = db.listApiKeys();
+  const keys = (db.listApiKeys() as any[]).map(k => ({ ...k, key: `${k.key.slice(0, 6)}...${k.key.slice(-4)}` }));
   return c.json(keys);
 });
 
