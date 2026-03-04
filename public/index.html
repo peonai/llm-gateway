@@ -559,8 +559,8 @@ body {
 <div id="auth-overlay" style="display:flex; position:fixed; inset:0; z-index:9999; background:var(--bg); align-items:center; justify-content:center; flex-direction:column;">
   <div style="text-align:center; max-width:360px; width:100%; padding:24px;">
     <div style="font-size:24px; font-weight:700; color:var(--green); margin-bottom:8px; text-shadow:0 0 20px rgba(0,255,136,0.3);">LLM<span style="color:var(--text-dim);font-weight:400">/</span>Gateway</div>
-    <div style="color:var(--text-dim); margin-bottom:32px; font-size:12px;">管理面板需要认证</div>
-    <input id="admin-key-input" type="password" placeholder="Admin Key"
+    <div style="color:var(--text-dim); margin-bottom:32px; font-size:12px;">Enter password to continue</div>
+    <input id="admin-key-input" type="password" placeholder="Password"
       style="width:100%; padding:12px 16px; background:var(--bg-input); border:1px solid var(--border); border-radius:var(--radius); color:var(--text); font-family:var(--font); font-size:13px; outline:none; margin-bottom:12px;"
       onkeydown="if(event.key==='Enter')attemptLogin()"
       autocomplete="off" spellcheck="false">
@@ -569,6 +569,7 @@ body {
       AUTHENTICATE
     </button>
     <div id="auth-error" style="color:var(--red); margin-top:12px; font-size:12px; min-height:18px;"></div>
+    <div style="color:var(--text-muted); margin-top:24px; font-size:11px;">Session expires after 48 hours</div>
   </div>
 </div>
 
