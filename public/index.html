@@ -1067,6 +1067,7 @@ async function checkAuth() {
 
 function bootDashboard() {
   loadDashboard(); loadProviders(); loadModels(); loadChains();
+  loadStickySelects(); loadStickyRoutes(); loadLastRequest();
   const h = location.hash.slice(1);
   if (h) switchTab(h);
 }
