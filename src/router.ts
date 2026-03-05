@@ -77,9 +77,15 @@ async function forwardRequest(deployment: Deployment, inboundPath: string, metho
   const requestBody = { ...body, model: deployment.modelName };
 
   // Normalize baseUrl: strip trailing / and /v1 so baseUrl + inboundPath is always correct
-  // e.g. "https://api.example.com/v1" + "/v1/messages" → "https://api.example.com/v1/messages"
   const baseUrl = deployment.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
-  const url = `${baseUrl}${inboundPath}`;
+  
+  let url: string;
+  if (deployment.apiType === "gemini") {
+    // Gemini uses /v1beta/models/{model}:generateContent
+    url = `${baseUrl}/v1beta/models/${deployment.modelName}:generateContent`;
+  } else {
+    url = `${baseUrl}${inboundPath}`;
+  }
 
   const outHeaders: Record<string, string> = { "Content-Type": "application/json" };
 
@@ -97,6 +103,8 @@ async function forwardRequest(deployment: Deployment, inboundPath: string, metho
     outHeaders["anthropic-version"] = headers.get("anthropic-version") || "2023-06-01";
     const beta = headers.get("anthropic-beta");
     if (beta) outHeaders["anthropic-beta"] = beta;
+  } else if (deployment.apiType === "gemini") {
+    outHeaders["x-goog-api-key"] = deployment.apiKey;
   } else {
     outHeaders["Authorization"] = `Bearer ${deployment.apiKey}`;
   }
@@ -186,7 +194,12 @@ async function tryDeployment(
           const parsed = JSON.parse(respBody);
           tokensIn = parsed.usage?.prompt_tokens ?? parsed.usage?.input_tokens ?? 0;
           tokensOut = parsed.usage?.completion_tokens ?? parsed.usage?.output_tokens ?? 0;
-        } catch {}
+          if (tokensIn === 0 && tokensOut === 0 && parsed.usage) {
+            console.warn(`[Token Parse] Zero tokens but usage exists:`, JSON.stringify(parsed.usage));
+          }
+        } catch (e) {
+          console.error(`[Token Parse] Failed to parse response body:`, e, `Body preview:`, respBody.slice(0, 200));
+        }
         insertLog({ model: modelName, deploymentId: dep.id, providerName: dep.providerName, status: resp.status, latencyMs, tokensIn, tokensOut });
 
         return { response: new Response(respBody, { status: resp.status, headers: { "Content-Type": resp.headers.get("Content-Type") || "application/json", "X-Route-Provider": dep.providerName, "X-Route-Model": dep.modelName } }), final: true };

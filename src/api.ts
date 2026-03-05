@@ -62,6 +62,16 @@ api.post("/providers/:id/test", async (c) => {
         signal: AbortSignal.timeout(10000),
       });
       return c.json({ ok: resp.ok, status: resp.status, message: resp.ok ? "Connection successful" : await resp.text().then(t => t.slice(0, 200)) });
+    } else if (p.apiType === "gemini") {
+      headers["x-goog-api-key"] = p.apiKey;
+      const url = `${baseUrl}/v1beta/models/gemini-2.0-flash-exp:generateContent`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ contents: [{ parts: [{ text: "hi" }], role: "user" }] }),
+        signal: AbortSignal.timeout(10000),
+      });
+      return c.json({ ok: resp.ok, status: resp.status, message: resp.ok ? "Connection successful" : await resp.text().then(t => t.slice(0, 200)) });
     } else {
       headers["Authorization"] = `Bearer ${p.apiKey}`;
       const url = `${baseUrl}/v1/models`;
@@ -79,14 +89,18 @@ api.post("/providers/:id/fetch-models", async (c) => {
   if (!p) return c.json({ error: "not found" }, 404);
   try {
     const baseUrl = p.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
-    const url = `${baseUrl}/v1/models`;
     const headers: Record<string, string> = {};
+    
     if (p.apiType === "anthropic") {
       headers["x-api-key"] = p.apiKey;
       headers["anthropic-version"] = "2023-06-01";
+    } else if (p.apiType === "gemini") {
+      headers["x-goog-api-key"] = p.apiKey;
     } else {
       headers["Authorization"] = `Bearer ${p.apiKey}`;
     }
+    
+    const url = `${baseUrl}/v1/models`;
     const resp = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
     if (!resp.ok) return c.json({ error: `HTTP ${resp.status}`, models: [] });
     const data: any = await resp.json();

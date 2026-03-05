@@ -144,7 +144,35 @@ export function updateProvider(id: string, p: { name?: string; baseUrl?: string;
 }
 
 export function deleteProvider(id: string) {
+  // Get provider name before deletion for chain cleanup
+  const provider: any = getProvider(id);
+  const providerName = provider?.name;
+
+  // Delete associated deployments and their stats
+  const deps = getDb().query("SELECT id FROM deployments WHERE providerId = ?").all(id) as any[];
+  for (const dep of deps) {
+    getDb().query("DELETE FROM deployment_stats WHERE deploymentId = ?").run(dep.id);
+  }
+  getDb().query("DELETE FROM deployments WHERE providerId = ?").run(id);
+
+  // Delete the provider
   getDb().query("DELETE FROM providers WHERE id = ?").run(id);
+
+  // Clean up chain references
+  if (providerName) {
+    const chains = listChains() as any[];
+    for (const chain of chains) {
+      try {
+        const items = JSON.parse(chain.items);
+        if (chain.mode === "provider" && Array.isArray(items)) {
+          const filtered = items.filter((it: any) => it.provider !== providerName);
+          if (filtered.length !== items.length) {
+            updateChain(chain.id, { items: JSON.stringify(filtered) });
+          }
+        }
+      } catch {}
+    }
+  }
 }
 
 // --- Model CRUD ---
@@ -240,12 +268,12 @@ export function createDeployment(d: { modelId: string; providerId: string; model
   return getDeployment(id);
 }
 
-export function updateDeployment(id: string, d: { order?: number; timeout?: number; maxRetries?: number; enabled?: number; modelName?: string }) {
+export function updateDeployment(id: string, d: { order?: number; timeout?: number; maxRetries?: number; enabled?: number; modelName?: string; providerId?: string }) {
   const existing: any = getDeployment(id);
   if (!existing) return null;
-  getDb().query('UPDATE deployments SET "order"=?, timeout=?, maxRetries=?, enabled=?, modelName=? WHERE id=?').run(
+  getDb().query('UPDATE deployments SET "order"=?, timeout=?, maxRetries=?, enabled=?, modelName=?, providerId=? WHERE id=?').run(
     d.order ?? existing.order, d.timeout ?? existing.timeout, d.maxRetries ?? existing.maxRetries,
-    d.enabled !== undefined ? d.enabled : existing.enabled, d.modelName ?? existing.modelName, id
+    d.enabled !== undefined ? d.enabled : existing.enabled, d.modelName ?? existing.modelName, d.providerId ?? existing.providerId, id
   );
   return getDeployment(id);
 }
