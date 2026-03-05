@@ -73,18 +73,23 @@ export function getCooldownInfo() {
 
 
 async function forwardRequest(deployment: Deployment, inboundPath: string, method: string, headers: Headers, body: any): Promise<{ resp: Response; needsResponseConversion: null }> {
-  // Pass-through: preserve inbound protocol, only replace model name
-  const requestBody = { ...body, model: deployment.modelName };
-
-  // Normalize baseUrl: strip trailing / and /v1 so baseUrl + inboundPath is always correct
   const baseUrl = deployment.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
   
   let url: string;
-  if (deployment.apiType === "gemini") {
-    // Gemini uses /v1beta/models/{model}:generateContent
-    url = `${baseUrl}/v1beta/models/${deployment.modelName}:generateContent`;
-  } else {
+  let requestBody: any;
+  
+  if (deployment.apiType === "gemini" && inboundPath.includes("/v1beta/models/")) {
+    // Gemini native: use URL from inboundPath, don't modify body
     url = `${baseUrl}${inboundPath}`;
+    requestBody = body;
+  } else if (deployment.apiType === "gemini") {
+    // Gemini via OpenAI format: convert to native
+    url = `${baseUrl}/v1beta/models/${deployment.modelName}:generateContent`;
+    requestBody = { ...body, model: deployment.modelName };
+  } else {
+    // OpenAI/Anthropic: replace model name
+    url = `${baseUrl}${inboundPath}`;
+    requestBody = { ...body, model: deployment.modelName };
   }
 
   const outHeaders: Record<string, string> = { "Content-Type": "application/json" };

@@ -111,6 +111,13 @@ app.post("/v1/messages", async (c) => {
   return routeRequest(modelName, "/v1/messages", "POST", c.req.raw.headers, body, isStreaming);
 });
 
+// Gemini native (passthrough)
+app.post("/v1beta/models/:model/generateContent", async (c) => {
+  const modelName = c.req.param("model").replace(/:.*$/, ""); // strip :generateContent suffix if present
+  const body = await c.req.json();
+  return routeRequest(modelName, `/v1beta/models/${modelName}:generateContent`, "POST", c.req.raw.headers, body, false);
+});
+
 // OpenAI models list
 app.get("/v1/models", (c) => {
   const models = listModels().map((m: any) => ({
