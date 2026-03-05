@@ -64,7 +64,7 @@ api.post("/providers/:id/test", async (c) => {
       return c.json({ ok: resp.ok, status: resp.status, message: resp.ok ? "Connection successful" : await resp.text().then(t => t.slice(0, 200)) });
     } else if (p.apiType === "gemini") {
       headers["x-goog-api-key"] = p.apiKey;
-      const url = `${baseUrl}/v1beta/models/gemini-2.0-flash-exp:generateContent`;
+      const url = `${baseUrl}/v1beta/models/gemini-3-pro:generateContent`;
       const resp = await fetch(url, {
         method: "POST",
         headers,
