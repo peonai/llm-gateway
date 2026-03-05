@@ -155,6 +155,7 @@ body {
   background: rgba(122,122,138,0.15); color: var(--text-dim); font-weight: 500;
 }
 .badge-anthropic { background: rgba(255,170,0,0.15); color: var(--amber); }
+.badge-gemini { background: rgba(66,133,244,0.15); color: #4285f4; }
 .badge-healthy { background: rgba(0,255,136,0.15); color: var(--green); }
 .badge-cooldown { background: rgba(255,170,0,0.15); color: var(--amber); }
 .badge-offline { background: rgba(255,51,85,0.15); color: var(--red); }
@@ -858,7 +859,7 @@ body {
     <div class="form-group"><label>Base URL</label><input type="text" id="provider-url" placeholder="https://api.openai.com"></div>
     <div class="form-group"><label>API Key</label><input type="password" id="provider-key" placeholder="sk-..."></div>
     <div class="form-group"><label>API Type</label>
-      <select id="provider-type"><option value="openai">OpenAI Compatible</option><option value="anthropic">Anthropic Messages</option></select>
+      <select id="provider-type"><option value="openai">OpenAI Compatible</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Google Gemini</option></select>
     </div>
     <div class="form-group"><label>Tags (comma separated)</label><input type="text" id="prov-tags" placeholder="e.g. cheap, fast, backup"></div>
     <div class="form-group"><label>Custom Headers (JSON)</label><textarea id="prov-custom-headers" rows="3" placeholder='{"User-Agent": "claude-cli/2.0.76 (external, cli)"}'></textarea></div>
@@ -1249,7 +1250,7 @@ async function loadProviders() {
   ps.forEach(p => providerCache[p.id] = p);
   if (!ps.length) { g.innerHTML = '<div style="color:var(--text-dim);padding:40px;text-align:center">No providers. Add one to start.</div>'; return; }
   g.innerHTML = ps.map(p => {
-    const badge = p.apiType==='anthropic' ? 'badge-anthropic' : 'badge-openai';
+    const badge = p.apiType==='anthropic' ? 'badge-anthropic' : p.apiType==='gemini' ? 'badge-gemini' : 'badge-openai';
     const masked = p.apiKey ? '••••••••••••••••' : 'none';
     const tags = (p.tags||'').split(',').filter(t=>t.trim()).map(t => `<span class="prov-tag">${esc(t.trim())}</span>`).join('');
     return `<div class="card"><div class="card-header"><div><div class="card-title">${esc(p.name)}</div><div class="card-meta">${esc(p.baseUrl)}</div></div><span class="card-badge ${badge}">${p.apiType}</span></div><div class="card-meta">Key: ${masked}</div><div class="card-actions" style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;gap:4px;flex-wrap:wrap">${tags}</div><div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="testProvider('${p.id}')">Test</button><button class="btn btn-sm" onclick="openProviderModal(providerCache['${p.id}'])">Edit</button><button class="btn btn-sm btn-danger" onclick="deleteProvider('${p.id}','${esc(p.name)}')">Delete</button></div></div></div>`;

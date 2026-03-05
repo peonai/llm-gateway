@@ -435,24 +435,26 @@ export async function routeTestDirect(modelName: string, provider: any, headers:
 
   trace.steps.push({ action: "try_deployment", model: modelName, provider: provider.name });
 
-  const isAnthropic = provider.apiType === "anthropic";
-  const path = isAnthropic ? "/v1/messages" : "/v1/chat/completions";
-
-  // Normalize baseUrl: strip trailing / and /v1
   const baseUrl = provider.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
-  const url = `${baseUrl}${path}`;
+  
+  let url: string;
+  let outHeaders: Record<string, string> = { "Content-Type": "application/json" };
+  let requestBody: any;
 
-  const outHeaders: Record<string, string> = { "Content-Type": "application/json" };
-  if (isAnthropic) {
+  if (provider.apiType === "anthropic") {
+    url = `${baseUrl}/v1/messages`;
     outHeaders["x-api-key"] = provider.apiKey;
     outHeaders["anthropic-version"] = headers.get("anthropic-version") || "2023-06-01";
+    requestBody = { model: modelName, max_tokens: body.max_tokens || 20, messages: body.messages || [{ role: "user", content: "hi" }] };
+  } else if (provider.apiType === "gemini") {
+    url = `${baseUrl}/v1beta/models/${modelName}:generateContent`;
+    outHeaders["x-goog-api-key"] = provider.apiKey;
+    requestBody = { contents: body.contents || [{ parts: [{ text: "hi" }], role: "user" }] };
   } else {
+    url = `${baseUrl}/v1/chat/completions`;
     outHeaders["Authorization"] = `Bearer ${provider.apiKey}`;
+    requestBody = { model: modelName, max_tokens: body.max_tokens || 20, messages: body.messages || [{ role: "user", content: "hi" }] };
   }
-
-  const requestBody: any = isAnthropic
-    ? { model: modelName, max_tokens: body.max_tokens || 20, messages: body.messages || [{ role: "user", content: "hi" }] }
-    : { model: modelName, max_tokens: body.max_tokens || 20, messages: body.messages || [{ role: "user", content: "hi" }] };
 
   const start = Date.now();
   try {
