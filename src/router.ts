@@ -183,7 +183,20 @@ async function forwardRequest(deployment: Deployment, inboundPath: string, metho
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), deployment.timeout * 1000);
   try {
-    const resp = await fetch(url, { method, headers: outHeaders, body: JSON.stringify(requestBody), signal: controller.signal });
+    const fetchOptions: any = { 
+      method, 
+      headers: outHeaders, 
+      body: JSON.stringify(requestBody), 
+      signal: controller.signal 
+    };
+    
+    // Debug log for Gemini conversions
+    if (needsConversion && deployment.apiType === "gemini") {
+      console.log(`[Gemini Convert] URL: ${url}`);
+      console.log(`[Gemini Convert] Body:`, JSON.stringify(requestBody, null, 2));
+    }
+    
+    const resp = await fetch(url, fetchOptions);
     clearTimeout(timeoutId);
     return { resp, needsResponseConversion: needsConversion };
   } catch (err: any) {
