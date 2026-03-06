@@ -87,6 +87,39 @@ app.use("/v1/*", async (c, next) => {
   return next();
 });
 
+// API Key auth for v1beta (Gemini native)
+app.use("/v1beta/*", async (c, next) => {
+  const keys = listApiKeys() as any[];
+  if (keys.length === 0) return next();
+
+  let apiKey = "";
+  const authHeader = c.req.header("Authorization") || "";
+  if (authHeader.startsWith("Bearer gw-")) {
+    apiKey = authHeader.replace("Bearer ", "");
+  }
+  const xApiKey = c.req.header("x-api-key") || "";
+  if (xApiKey.startsWith("gw-")) {
+    apiKey = xApiKey;
+  }
+  // Also accept x-goog-api-key for Gemini native clients
+  const xGoogKey = c.req.header("x-goog-api-key") || "";
+  if (xGoogKey.startsWith("gw-")) {
+    apiKey = xGoogKey;
+  }
+
+  if (!apiKey) {
+    return c.json({ error: { message: "API key required", type: "authentication_error" } }, 401);
+  }
+
+  const keyRecord: any = getApiKeyByKey(apiKey);
+  if (!keyRecord || !keyRecord.enabled) {
+    return c.json({ error: { message: "Invalid or disabled API key", type: "authentication_error" } }, 401);
+  }
+
+  incrementApiKeyUsage(apiKey);
+  return next();
+});
+
 // --- Proxy endpoints ---
 
 // OpenAI compatible
@@ -111,11 +144,30 @@ app.post("/v1/messages", async (c) => {
   return routeRequest(modelName, "/v1/messages", "POST", c.req.raw.headers, body, isStreaming);
 });
 
-// Gemini native (passthrough)
-app.post("/v1beta/models/:model/generateContent", async (c) => {
-  const modelName = c.req.param("model").replace(/:.*$/, ""); // strip :generateContent suffix if present
+// Gemini native endpoints (passthrough) - use wildcard to match :action pattern
+app.post("/v1beta/models/*", async (c) => {
+  const fullPath = c.req.path; // e.g. /v1beta/models/gemini-3.1-flash-image:generateContent
+  const match = fullPath.match(/\/v1beta\/models\/([^:]+):(\w+)$/);
+  if (!match) {
+    return c.json({ error: { message: "Invalid Gemini API path", type: "invalid_request_error" } }, 400);
+  }
+  const [, modelName, action] = match;
   const body = await c.req.json();
-  return routeRequest(modelName, `/v1beta/models/${modelName}:generateContent`, "POST", c.req.raw.headers, body, false);
+  const isStreaming = action === "streamGenerateContent";
+  return routeRequest(modelName, `/v1beta/models/${modelName}:${action}`, "POST", c.req.raw.headers, body, isStreaming);
+});
+
+// v1 variants
+app.post("/v1/models/*", async (c) => {
+  const fullPath = c.req.path;
+  const match = fullPath.match(/\/v1\/models\/([^:]+):(\w+)$/);
+  if (!match) {
+    return c.json({ error: { message: "Invalid Gemini API path", type: "invalid_request_error" } }, 400);
+  }
+  const [, modelName, action] = match;
+  const body = await c.req.json();
+  const isStreaming = action === "streamGenerateContent";
+  return routeRequest(modelName, `/v1beta/models/${modelName}:${action}`, "POST", c.req.raw.headers, body, isStreaming);
 });
 
 // OpenAI models list
