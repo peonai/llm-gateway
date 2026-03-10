@@ -22,7 +22,7 @@ Base: http://localhost:3456/api
 
 ### Providers
 - GET /api/providers — list all providers (apiKeys are masked in response)
-- POST /api/providers — create provider { name, baseUrl, apiKey, apiType: "openai"|"anthropic" }
+- POST /api/providers — create provider { name, baseUrl, apiKey, apiType: "openai"|"openai-responses"|"anthropic"|"gemini" }
 - PUT /api/providers/:id — update provider
 - DELETE /api/providers/:id — delete provider
 - POST /api/providers/:id/test — test provider connection
@@ -80,6 +80,10 @@ Sticky behavior:
 
 ## Proxy (LLM requests)
 - POST /v1/chat/completions — OpenAI-compatible (requires gw- API key)
+- POST /v1/responses — OpenAI Responses API compatible (requires gw- API key)
+- GET /v1/responses/:response_id — retrieve stored response metadata target and proxy upstream response
+- POST /v1/embeddings — embeddings proxy (requires gw- API key)
+- POST /v1/rerank — rerank proxy (requires gw- API key)
 - POST /v1/messages — Anthropic-compatible (requires gw- API key)
 - GET /v1/models — list models (no auth)
 
@@ -102,4 +106,4 @@ If the model name matches a chain, the gateway routes through the chain's fallba
 3. Create deployments linking models to providers
 4. Create API key for your application
 5. Optionally create a chain for fallback routing
-6. Point your app at the gateway's /v1/chat/completions or /v1/messages with `Authorization: Bearer gw-xxx`
+6. Point your app at the gateway's /v1/chat/completions, /v1/responses, /v1/embeddings, /v1/rerank, or /v1/messages with `Authorization: Bearer gw-xxx`

@@ -1,4 +1,4 @@
-import { listDeployments, getModelByName, updateStats, getStats, insertLog, getChainByName, listProviders } from "./db";
+import { listDeployments, getModelByName, updateStats, getStats, insertLog, getChainByName, listProviders, getDeployment } from "./db";
 
 interface Deployment {
   id: string; modelId: string; providerId: string; modelName: string;
@@ -17,6 +17,20 @@ export interface RouteTrace {
   totalLatencyMs: number;
   skipSticky?: boolean;
   stickyKey?: string; // chain name or model name — single key for sticky/pin
+  lastErrorResponse?: TestResponsePayload;
+}
+
+export interface TestResponsePayload {
+  status: number;
+  contentType: string;
+  raw: string;
+  body?: any;
+  text?: string;
+}
+
+export interface RouteTestResult extends RouteTrace {
+  response?: TestResponsePayload;
+  errorResponse?: TestResponsePayload;
 }
 
 export interface RouteStep {
@@ -34,6 +48,22 @@ const cooldowns = new Map<string, number>();
 const consecutiveFailsMap = new Map<string, number>();
 const COOLDOWN_BASE = 120_000;
 const MAX_CONSECUTIVE_FAILS = 3;
+const PLAYGROUND_TEST_PATH = "/__playground_test__";
+const RESPONSES_API_PATH = "/v1/responses";
+const EMBEDDINGS_API_PATH = "/v1/embeddings";
+const RERANK_API_PATH = "/v1/rerank";
+const RERANK_API_ALT_PATH = "/v1/re-rank";
+const RESPONSE_TRACK_TTL_MS = 24 * 60 * 60 * 1000;
+
+type ResponseTransform = "none" | "gemini-chat" | "gemini-embeddings";
+
+interface StoredResponseTarget {
+  deploymentId: string;
+  requestModel: string;
+  expiresAt: number;
+}
+
+const responseTargetMap = new Map<string, StoredResponseTarget>();
 
 
 function isInCooldown(deploymentId: string): boolean {
@@ -80,10 +110,10 @@ function convertOpenAIToGemini(body: any): any {
   const otherMsgs = body.messages.filter((m: any) => m.role !== "system");
   
   const contents = otherMsgs.map((msg: any, idx: number) => {
-    const parts = [{ text: msg.content }];
+    const parts: { text: string }[] = [{ text: msg.content }];
     // 如果有 system 且是第一条 user 消息，把 system 作为前缀
     if (systemMsg && idx === 0 && msg.role === "user") {
-      parts[0].text = `${systemMsg.content}\n\n${msg.content}`;
+      parts[0]!.text = `${systemMsg.content}\n\n${msg.content}`;
     }
     return {
       role: msg.role === "assistant" ? "model" : msg.role,
@@ -128,15 +158,281 @@ function convertGeminiToOpenAI(geminiResp: any, model: string): any {
   };
 }
 
-async function forwardRequest(deployment: Deployment, inboundPath: string, method: string, headers: Headers, body: any): Promise<{ resp: Response; needsResponseConversion: boolean }> {
+function convertOpenAIEmbeddingsToGemini(body: any) {
+  const inputItems = Array.isArray(body.input) ? body.input : [body.input];
+  return {
+    requests: inputItems.map((item: any) => {
+      const text = Array.isArray(item) ? item.join(" ") : String(item ?? "");
+      return {
+        content: { parts: [{ text }] },
+        ...(body.task_type ? { taskType: body.task_type } : {}),
+        ...(body.title ? { title: body.title } : {}),
+        ...(body.dimensions ? { outputDimensionality: body.dimensions } : {}),
+      };
+    }),
+  };
+}
+
+function convertGeminiEmbeddingsToOpenAI(geminiResp: any, model: string) {
+  const embeddings = Array.isArray(geminiResp?.embeddings) ? geminiResp.embeddings : [];
+  const promptTokens = embeddings.reduce((sum: number, item: any) => sum + (item?.statistics?.tokenCount || 0), 0);
+  return {
+    object: "list",
+    data: embeddings.map((item: any, index: number) => ({
+      object: "embedding",
+      embedding: item?.values || [],
+      index,
+    })),
+    model,
+    usage: {
+      prompt_tokens: promptTokens,
+      total_tokens: promptTokens,
+    },
+  };
+}
+
+function pruneStoredResponses() {
+  const now = Date.now();
+  for (const [responseId, entry] of responseTargetMap) {
+    if (entry.expiresAt <= now) responseTargetMap.delete(responseId);
+  }
+}
+
+function rememberResponseTarget(responseId: string, deploymentId: string, requestModel: string) {
+  pruneStoredResponses();
+  responseTargetMap.set(responseId, {
+    deploymentId,
+    requestModel,
+    expiresAt: Date.now() + RESPONSE_TRACK_TTL_MS,
+  });
+}
+
+export function getStoredResponseModel(responseId: string): string | null {
+  pruneStoredResponses();
+  return responseTargetMap.get(responseId)?.requestModel || null;
+}
+
+function tryParseJson(raw: string, contentType = ""): any | undefined {
+  const text = raw?.trim();
+  if (!text) return undefined;
+  const looksJson = contentType.includes("application/json") || text.startsWith("{") || text.startsWith("[");
+  if (!looksJson) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeTextContent(content: any): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item?.type === "text" && typeof item.text === "string") return item.text;
+        if (typeof item?.content === "string") return item.content;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n\n");
+  }
+  return "";
+}
+
+function convertOpenAIToResponsesInput(body: any) {
+  if (body.input !== undefined) return body.input;
+
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  if (!messages.length) {
+    return [{ role: "user", content: [{ type: "input_text", text: "hi" }] }];
+  }
+
+  return messages.map((msg: any) => {
+    const role = msg?.role === "assistant" ? "assistant" : msg?.role === "system" ? "system" : "user";
+    const defaultType = role === "assistant" ? "output_text" : "input_text";
+    const content = Array.isArray(msg?.content)
+      ? msg.content.map((part: any) => {
+          if (typeof part === "string") return { type: defaultType, text: part };
+          const text = typeof part?.text === "string" ? part.text : typeof part?.content === "string" ? part.content : "";
+          if (!text) return null;
+          const partType = part?.type === "input_text" || part?.type === "output_text" ? part.type : defaultType;
+          return { type: partType, text };
+        }).filter(Boolean)
+      : [{ type: defaultType, text: normalizeTextContent(msg?.content) || String(msg?.content || "") }];
+    return { role, content };
+  });
+}
+
+function extractTextFromSse(raw: string): string {
+  if (!raw || !raw.includes("data:")) return "";
+  const deltas: string[] = [];
+  let completedText = "";
+
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const event = JSON.parse(payload);
+      if (typeof event?.delta === "string") deltas.push(event.delta);
+      if (typeof event?.text === "string") deltas.push(event.text);
+      if (typeof event?.response?.output_text === "string") completedText = event.response.output_text;
+      if (Array.isArray(event?.response?.output)) {
+        const text = event.response.output
+          .flatMap((item: any) => Array.isArray(item?.content) ? item.content : [])
+          .map((part: any) => typeof part?.text === "string" ? part.text : "")
+          .filter(Boolean)
+          .join("\n\n");
+        if (text) completedText = text;
+      }
+    } catch {}
+  }
+
+  return completedText || deltas.join("");
+}
+
+function buildResponsesTestBody(body: any, modelName: string) {
+  return {
+    model: modelName,
+    input: convertOpenAIToResponsesInput(body),
+    ...(body.max_output_tokens !== undefined ? { max_output_tokens: body.max_output_tokens } : {}),
+    ...(body.max_output_tokens === undefined && body.max_tokens !== undefined ? { max_output_tokens: body.max_tokens } : {}),
+    ...(body.stream !== undefined ? { stream: body.stream } : {}),
+  };
+}
+
+function isRerankPath(path: string) {
+  return path === RERANK_API_PATH || path === RERANK_API_ALT_PATH;
+}
+
+function applyCustomHeaders(target: Record<string, string>, customHeaders?: string) {
+  if (!customHeaders) return;
+  try {
+    Object.assign(target, JSON.parse(customHeaders));
+  } catch {}
+}
+
+function extractResponseText(body: any, raw: string): string {
+  if (!body) return extractTextFromSse(raw) || raw || "";
+  if (typeof body === "string") return body;
+
+  if (typeof body?.output_text === "string" && body.output_text) return body.output_text;
+
+  const responsesText = body?.output
+    ?.map((item: any) => {
+      if (typeof item?.text === "string") return item.text;
+      if (!Array.isArray(item?.content)) return "";
+      return item.content
+        .map((part: any) => {
+          if (typeof part?.text === "string") return part.text;
+          if (typeof part?.content === "string") return part.content;
+          return "";
+        })
+        .filter(Boolean)
+        .join("\n\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+  if (responsesText) return responsesText;
+
+  const openAiText = body?.choices
+    ?.map((choice: any) => normalizeTextContent(choice?.message?.content) || choice?.text || "")
+    .filter(Boolean)
+    .join("\n\n");
+  if (openAiText) return openAiText;
+
+  const anthropicText = normalizeTextContent(body?.content);
+  if (anthropicText) return anthropicText;
+
+  const geminiText = body?.candidates
+    ?.map((candidate: any) => normalizeTextContent(candidate?.content?.parts?.map((part: any) => part?.text || "")))
+    .filter(Boolean)
+    .join("\n\n");
+  if (geminiText) return geminiText;
+
+  if (typeof body?.output_text === "string") return body.output_text;
+  return raw || "";
+}
+
+function buildTestResponsePayload(response: Response, raw: string): TestResponsePayload {
+  const contentType = response.headers.get("content-type") || "application/json";
+  const body = tryParseJson(raw, contentType);
+  const text = extractResponseText(body, raw).trim();
+  return {
+    status: response.status,
+    contentType,
+    raw,
+    body,
+    text,
+  };
+}
+
+async function finalizeTestResult(trace: RouteTrace, response: Response | null): Promise<RouteTestResult> {
+  if (!response) {
+    return {
+      ...trace,
+      ...(trace.lastErrorResponse ? { errorResponse: trace.lastErrorResponse } : {}),
+    };
+  }
+
+  const raw = await response.text().catch(() => "");
+  const payload = buildTestResponsePayload(response, raw);
+  return {
+    ...trace,
+    ...(response.ok ? { response: payload } : { errorResponse: payload }),
+  };
+}
+
+async function forwardRequest(deployment: Deployment, inboundPath: string, method: string, headers: Headers, body: any): Promise<{ resp: Response; responseTransform: ResponseTransform }> {
   const baseUrl = deployment.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
   
   let url: string;
   let requestBody: any;
   const isStreaming = body.stream === true;
-  const needsConversion = deployment.apiType === "gemini" && !inboundPath.includes("/v1beta/models/");
+  let responseTransform: ResponseTransform = "none";
+  const isResponsesProvider = deployment.apiType === "openai-responses";
+  const isResponsesRequest = inboundPath === RESPONSES_API_PATH;
+  const isEmbeddingsRequest = inboundPath === EMBEDDINGS_API_PATH;
+  const isRerankRequest = isRerankPath(inboundPath);
+
+  if (isResponsesRequest && !isResponsesProvider) {
+    throw new Error(`Provider ${deployment.providerName} does not support /v1/responses`);
+  }
+  if (!isResponsesRequest && inboundPath !== PLAYGROUND_TEST_PATH && isResponsesProvider) {
+    throw new Error(`Provider ${deployment.providerName} only supports /v1/responses`);
+  }
+  if (deployment.apiType === "gemini" && isRerankRequest) {
+    throw new Error(`Provider ${deployment.providerName} does not support rerank`);
+  }
   
-  if (deployment.apiType === "gemini" && inboundPath.includes("/v1beta/models/")) {
+  if (inboundPath === PLAYGROUND_TEST_PATH) {
+    if (deployment.apiType === "anthropic") {
+      url = `${baseUrl}/v1/messages`;
+      requestBody = {
+        model: deployment.modelName,
+        max_tokens: body.max_tokens || 20,
+        messages: body.messages || [{ role: "user", content: "hi" }],
+      };
+    } else if (deployment.apiType === "gemini") {
+      url = `${baseUrl}/v1beta/models/${deployment.modelName}:generateContent`;
+      requestBody = convertOpenAIToGemini(body);
+      responseTransform = "gemini-chat";
+    } else if (isResponsesProvider) {
+      url = `${baseUrl}${RESPONSES_API_PATH}`;
+      requestBody = buildResponsesTestBody(body, deployment.modelName);
+    } else {
+      url = `${baseUrl}/v1/chat/completions`;
+      requestBody = { ...body, model: deployment.modelName };
+    }
+  } else if (isResponsesProvider) {
+    url = `${baseUrl}${RESPONSES_API_PATH}`;
+    requestBody = { ...body, model: deployment.modelName };
+  } else if (deployment.apiType === "gemini" && isEmbeddingsRequest) {
+    url = `${baseUrl}/v1beta/models/${deployment.modelName}:batchEmbedContents`;
+    requestBody = convertOpenAIEmbeddingsToGemini(body);
+    responseTransform = "gemini-embeddings";
+  } else if (deployment.apiType === "gemini" && inboundPath.includes("/v1beta/models/")) {
     // Gemini native: use URL from inboundPath, don't modify body
     url = `${baseUrl}${inboundPath}`;
     // Add ?alt=sse for streaming endpoints
@@ -152,6 +448,7 @@ async function forwardRequest(deployment: Deployment, inboundPath: string, metho
       url += "?alt=sse";
     }
     requestBody = convertOpenAIToGemini(body);
+    responseTransform = "gemini-chat";
   } else {
     // OpenAI/Anthropic: replace model name
     url = `${baseUrl}${inboundPath}`;
@@ -161,12 +458,7 @@ async function forwardRequest(deployment: Deployment, inboundPath: string, metho
   const outHeaders: Record<string, string> = { "Content-Type": "application/json" };
 
   // Apply custom headers from provider config
-  if (deployment.customHeaders) {
-    try {
-      const custom = JSON.parse(deployment.customHeaders);
-      Object.assign(outHeaders, custom);
-    } catch {}
-  }
+  applyCustomHeaders(outHeaders, deployment.customHeaders);
 
   // Auth based on provider's apiType
   if (deployment.apiType === "anthropic") {
@@ -191,14 +483,14 @@ async function forwardRequest(deployment: Deployment, inboundPath: string, metho
     };
     
     // Debug log for Gemini conversions
-    if (needsConversion && deployment.apiType === "gemini") {
+    if (responseTransform !== "none" && deployment.apiType === "gemini") {
       console.log(`[Gemini Convert] URL: ${url}`);
       console.log(`[Gemini Convert] Body:`, JSON.stringify(requestBody, null, 2));
     }
     
     const resp = await fetch(url, fetchOptions);
     clearTimeout(timeoutId);
-    return { resp, needsResponseConversion: needsConversion };
+    return { resp, responseTransform };
   } catch (err: any) {
     clearTimeout(timeoutId);
     throw err.name === "AbortError" ? new Error(`Timeout after ${deployment.timeout}s`) : err;
@@ -220,7 +512,7 @@ async function tryDeployment(
 
   while (retries >= 0) {
     try {
-      const { resp, needsResponseConversion } = await forwardRequest(dep, path, method, headers, body);
+      const { resp, responseTransform } = await forwardRequest(dep, path, method, headers, body);
       const latencyMs = Date.now() - start;
 
 
@@ -244,7 +536,7 @@ async function tryDeployment(
           let usageData: { tokensIn: number; tokensOut: number } | null = null;
           const transform = new TransformStream({
             transform(chunk, controller) {
-              if (needsResponseConversion) {
+              if (responseTransform === "gemini-chat") {
                 // Gemini streaming: convert SSE format
                 try {
                   const text = new TextDecoder().decode(chunk);
@@ -305,8 +597,8 @@ async function tryDeployment(
         let respBody = await resp.text();
         let tokensIn = 0, tokensOut = 0;
         
-        if (needsResponseConversion) {
-          // Convert Gemini response to OpenAI format
+        if (responseTransform === "gemini-chat") {
+          // Convert Gemini response to OpenAI chat format
           try {
             const geminiResp = JSON.parse(respBody);
             const openaiResp = convertGeminiToOpenAI(geminiResp, modelName);
@@ -316,11 +608,24 @@ async function tryDeployment(
           } catch (e) {
             console.error(`[Gemini Convert] Failed:`, e);
           }
+        } else if (responseTransform === "gemini-embeddings") {
+          try {
+            const geminiResp = JSON.parse(respBody);
+            const openaiResp = convertGeminiEmbeddingsToOpenAI(geminiResp, modelName);
+            respBody = JSON.stringify(openaiResp);
+            tokensIn = openaiResp.usage.prompt_tokens;
+            tokensOut = 0;
+          } catch (e) {
+            console.error(`[Gemini Embeddings Convert] Failed:`, e);
+          }
         } else {
           try {
             const parsed = JSON.parse(respBody);
             tokensIn = parsed.usage?.prompt_tokens ?? parsed.usage?.input_tokens ?? 0;
             tokensOut = parsed.usage?.completion_tokens ?? parsed.usage?.output_tokens ?? 0;
+            if (path === RESPONSES_API_PATH && typeof parsed?.id === "string") {
+              rememberResponseTarget(parsed.id, dep.id, modelName);
+            }
           } catch (e) {
             console.error(`[Token Parse] Failed:`, e);
           }
@@ -328,12 +633,13 @@ async function tryDeployment(
         
         insertLog({ model: modelName, deploymentId: dep.id, providerName: dep.providerName, status: resp.status, latencyMs, tokensIn, tokensOut });
 
-        return { response: new Response(respBody, { status: resp.status, headers: { "Content-Type": "application/json", "X-Route-Provider": dep.providerName, "X-Route-Model": dep.modelName } }), final: true };
+        return { response: new Response(respBody, { status: resp.status, headers: { "Content-Type": resp.headers.get("content-type") || "application/json", "X-Route-Provider": dep.providerName, "X-Route-Model": dep.modelName } }), final: true };
       }
 
       const errorBody = await resp.text();
       lastError = errorBody.slice(0, 500);
       lastStatus = resp.status;
+      trace.lastErrorResponse = buildTestResponsePayload(resp, errorBody);
       insertLog({ model: modelName, deploymentId: dep.id, providerName: dep.providerName, status: resp.status, latencyMs: Date.now() - start, error: lastError });
       updateStats(dep.id, {
         totalRequests: (getStats(dep.id)?.totalRequests ?? 0) + 1,
@@ -349,6 +655,12 @@ async function tryDeployment(
     } catch (err: any) {
       lastError = err.message || String(err);
       lastStatus = 502;
+      trace.lastErrorResponse = {
+        status: 502,
+        contentType: "text/plain",
+        raw: lastError,
+        text: lastError,
+      };
       insertLog({ model: modelName, deploymentId: dep.id, providerName: dep.providerName, status: 502, latencyMs: Date.now() - start, error: lastError });
       updateStats(dep.id, {
         totalRequests: (getStats(dep.id)?.totalRequests ?? 0) + 1,
@@ -526,8 +838,55 @@ export async function routeRequest(requestModelName: string, path: string, metho
   }), { status: 503, headers: { "Content-Type": "application/json" } });
 }
 
+export async function routeRetrieveResponse(responseId: string): Promise<Response> {
+  pruneStoredResponses();
+  const target = responseTargetMap.get(responseId);
+  if (!target) {
+    return new Response(JSON.stringify({ error: { message: `Unknown response id \"${responseId}\"`, type: "not_found_error" } }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const dep: any = getDeployment(target.deploymentId);
+  if (!dep) {
+    responseTargetMap.delete(responseId);
+    return new Response(JSON.stringify({ error: { message: `Deployment for response \"${responseId}\" no longer exists`, type: "not_found_error" } }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const baseUrl = dep.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+  const outHeaders: Record<string, string> = {};
+  applyCustomHeaders(outHeaders, dep.customHeaders);
+  outHeaders["Authorization"] = `Bearer ${dep.apiKey}`;
+
+  try {
+    const resp = await fetch(`${baseUrl}${RESPONSES_API_PATH}/${encodeURIComponent(responseId)}`, {
+      method: "GET",
+      headers: outHeaders,
+      signal: AbortSignal.timeout(Math.max((dep.timeout || 30) * 1000, 5000)),
+    });
+    const bodyText = await resp.text();
+    return new Response(bodyText, {
+      status: resp.status,
+      headers: {
+        "Content-Type": resp.headers.get("content-type") || "application/json",
+        "X-Route-Provider": dep.providerName,
+        "X-Route-Model": dep.modelName,
+      },
+    });
+  } catch (err: any) {
+    return new Response(JSON.stringify({ error: { message: err.message || String(err), type: "server_error" } }), {
+      status: 502,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+}
+
 // --- Test endpoint: route with trace only, returns trace info ---
-export async function routeTestRequest(requestModelName: string, path: string, method: string, headers: Headers, body: any): Promise<RouteTrace> {
+export async function routeTestRequest(requestModelName: string, path: string, method: string, headers: Headers, body: any): Promise<RouteTestResult> {
   const traceStart = Date.now();
   const trace: RouteTrace = { requestModel: requestModelName, steps: [], success: false, totalLatencyMs: 0, skipSticky: true };
 
@@ -551,11 +910,11 @@ export async function routeTestRequest(requestModelName: string, path: string, m
   trace.totalLatencyMs = Date.now() - traceStart;
   if (!response) trace.steps.push({ action: "fail", error: "all fallbacks exhausted" });
 
-  return trace;
+  return finalizeTestResult(trace, response);
 }
 
 // Direct provider test (bypass routing, for Playground custom mode)
-export async function routeTestDirect(modelName: string, provider: any, headers: Headers, body: any): Promise<RouteTrace> {
+export async function routeTestDirect(modelName: string, provider: any, headers: Headers, body: any): Promise<RouteTestResult> {
   const traceStart = Date.now();
   const trace: RouteTrace = { requestModel: modelName, steps: [], success: false, totalLatencyMs: 0 };
 
@@ -575,7 +934,11 @@ export async function routeTestDirect(modelName: string, provider: any, headers:
   } else if (provider.apiType === "gemini") {
     url = `${baseUrl}/v1beta/models/${modelName}:generateContent`;
     outHeaders["x-goog-api-key"] = provider.apiKey;
-    requestBody = { contents: body.contents || [{ parts: [{ text: "hi" }], role: "user" }] };
+    requestBody = body.contents ? { contents: body.contents } : convertOpenAIToGemini(body);
+  } else if (provider.apiType === "openai-responses") {
+    url = `${baseUrl}${RESPONSES_API_PATH}`;
+    outHeaders["Authorization"] = `Bearer ${provider.apiKey}`;
+    requestBody = buildResponsesTestBody(body, modelName);
   } else {
     url = `${baseUrl}/v1/chat/completions`;
     outHeaders["Authorization"] = `Bearer ${provider.apiKey}`;
@@ -595,14 +958,24 @@ export async function routeTestDirect(modelName: string, provider: any, headers:
       trace.success = true;
       trace.finalDeployment = { provider: provider.name, model: modelName, deploymentId: "direct-test" };
     } else {
-      const errText = await resp.text().catch(() => "");
+      const errText = await resp.clone().text().catch(() => "");
+      trace.lastErrorResponse = buildTestResponsePayload(resp, errText);
       trace.steps.push({ action: "fail", provider: provider.name, model: modelName, status: resp.status, error: errText.slice(0, 200) });
     }
+    trace.totalLatencyMs = Date.now() - traceStart;
+    return finalizeTestResult(trace, resp);
   } catch (err: any) {
+    trace.lastErrorResponse = {
+      status: 502,
+      contentType: "text/plain",
+      raw: err.message,
+      text: err.message,
+    };
     trace.steps.push({ action: "fail", provider: provider.name, model: modelName, error: err.message });
   }
 
   trace.totalLatencyMs = Date.now() - traceStart;
-  return trace;
+  return finalizeTestResult(trace, null);
 }
 
+export { PLAYGROUND_TEST_PATH };

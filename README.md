@@ -110,6 +110,10 @@ PORT=3456 ADMIN_KEY=your-secret npm run dev:node
 |---|---|---|
 | `GET /health` | None | Health check |
 | `POST /v1/chat/completions` | API Key (`gw-`) | OpenAI-compatible proxy |
+| `POST /v1/responses` | API Key (`gw-`) | OpenAI Responses API proxy |
+| `GET /v1/responses/:response_id` | API Key (`gw-`) | Retrieve stored OpenAI response |
+| `POST /v1/embeddings` | API Key (`gw-`) | Embeddings proxy |
+| `POST /v1/rerank` | API Key (`gw-`) | Rerank proxy |
 | `POST /v1/messages` | API Key (`gw-`) | Anthropic-compatible proxy |
 | `GET /v1/models` | None | List available models |
 | `GET /api/providers` | Admin Key | List providers |

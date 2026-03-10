@@ -429,7 +429,20 @@ body {
 .playground-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 @media (max-width: 900px) { .playground-layout { grid-template-columns: 1fr; } }
 .playground-input { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
-.playground-output { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+.playground-output { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 18px; }
+.playground-panel-title { font-size: 13px; margin-bottom: 12px; }
+.playground-panel-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.playground-response-empty { color: var(--text-dim); text-align: center; padding: 40px 16px; font-size: 12px; line-height: 1.6; }
+.playground-response-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.playground-response-pill {
+  display: inline-flex; align-items: center; min-height: 28px; padding: 4px 10px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--bg-input);
+  font-size: 11px; color: var(--text-dim);
+}
+.playground-response-pill.ok { border-color: rgba(0,255,136,0.25); color: var(--green); background: rgba(0,255,136,0.08); }
+.playground-response-pill.err { border-color: rgba(255,51,85,0.25); color: var(--red); background: rgba(255,51,85,0.08); }
+.playground-response-box { margin-top: 0; max-height: 360px; line-height: 1.6; }
+.playground-response-box.error { color: var(--red); font-family: var(--font-mono); font-size: 11px; }
 .trace-flow { margin-top: 16px; }
 .trace-step {
   display: flex; align-items: flex-start; gap: 12px; padding: 8px 0;
@@ -641,6 +654,10 @@ body {
       <div class="section-title">Providers</div>
       <button class="btn btn-primary" onclick="openProviderModal()">+ Add Provider</button>
     </div>
+    <div class="filter-bar">
+      <input type="text" id="provider-search" placeholder="Search providers, tags, type, URL..." oninput="filterProviders()" style="flex:1;min-width:220px">
+      <div id="provider-search-meta" style="font-size:11px;color:var(--text-dim);white-space:nowrap">0 providers</div>
+    </div>
     <div class="card-grid" id="provider-grid"></div>
   </div>
 
@@ -725,14 +742,25 @@ body {
         <button class="btn btn-primary" id="pg-send-btn" onclick="runPlayground()" style="width:100%;padding:10px;font-size:13px">
           ▶ Send Test Request
         </button>
-
-        <div id="pg-response" style="margin-top:16px"></div>
       </div>
       <div class="playground-output">
-        <div class="section-title" style="font-size:13px;margin-bottom:12px">Route Trace</div>
-        <div id="pg-trace">
-          <div style="color:var(--text-dim);text-align:center;padding:40px">
-            Select a model or chain and send a request
+        <div>
+          <div class="section-title playground-panel-title">Route Trace</div>
+          <div id="pg-trace">
+            <div style="color:var(--text-dim);text-align:center;padding:40px">
+              Select a model or chain and send a request
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="playground-panel-title-row">
+            <div class="section-title playground-panel-title" style="margin-bottom:0">Model Response</div>
+            <button class="btn btn-sm" id="pg-response-copy" onclick="copyPlaygroundResponse()" disabled>Copy</button>
+          </div>
+          <div id="pg-response-panel">
+            <div class="playground-response-empty">
+              Successful requests show model text here, failures show the raw error response.
+            </div>
           </div>
         </div>
       </div>
@@ -859,7 +887,7 @@ body {
     <div class="form-group"><label>Base URL</label><input type="text" id="provider-url" placeholder="https://api.openai.com"></div>
     <div class="form-group"><label>API Key</label><input type="password" id="provider-key" placeholder="sk-..."></div>
     <div class="form-group"><label>API Type</label>
-      <select id="provider-type"><option value="openai">OpenAI Compatible</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Google Gemini</option></select>
+      <select id="provider-type"><option value="openai">OpenAI Compatible</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Google Gemini</option></select>
     </div>
     <div class="form-group"><label>Tags (comma separated)</label><input type="text" id="prov-tags" placeholder="e.g. cheap, fast, backup"></div>
     <div class="form-group"><label>Custom Headers (JSON)</label><textarea id="prov-custom-headers" rows="3" placeholder='{"User-Agent": "claude-cli/2.0.76 (external, cli)"}'></textarea></div>
@@ -1244,17 +1272,51 @@ async function testProvider(id) {
 }
 
 let providerCache = {};
-async function loadProviders() {
-  const ps = await fetch(API+'/providers').then(r=>r.json());
+let providerList = [];
+
+function renderProviders(ps) {
   const g = document.getElementById('provider-grid');
-  ps.forEach(p => providerCache[p.id] = p);
-  if (!ps.length) { g.innerHTML = '<div style="color:var(--text-dim);padding:40px;text-align:center">No providers. Add one to start.</div>'; return; }
+  const meta = document.getElementById('provider-search-meta');
+  const total = providerList.length;
+  const shown = ps.length;
+  if (meta) {
+    meta.textContent = total === shown ? `${total} provider${total === 1 ? '' : 's'}` : `${shown} of ${total} providers`;
+  }
+  if (!total) {
+    g.innerHTML = '<div style="color:var(--text-dim);padding:40px;text-align:center">No providers. Add one to start.</div>';
+    return;
+  }
+  if (!shown) {
+    g.innerHTML = '<div style="color:var(--text-dim);padding:40px;text-align:center">No providers match your search.</div>';
+    return;
+  }
   g.innerHTML = ps.map(p => {
     const badge = p.apiType==='anthropic' ? 'badge-anthropic' : p.apiType==='gemini' ? 'badge-gemini' : 'badge-openai';
     const masked = p.apiKey ? '••••••••••••••••' : 'none';
     const tags = (p.tags||'').split(',').filter(t=>t.trim()).map(t => `<span class="prov-tag">${esc(t.trim())}</span>`).join('');
     return `<div class="card"><div class="card-header"><div><div class="card-title">${esc(p.name)}</div><div class="card-meta">${esc(p.baseUrl)}</div></div><span class="card-badge ${badge}">${p.apiType}</span></div><div class="card-meta">Key: ${masked}</div><div class="card-actions" style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;gap:4px;flex-wrap:wrap">${tags}</div><div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="testProvider('${p.id}')">Test</button><button class="btn btn-sm" onclick="openProviderModal(providerCache['${p.id}'])">Edit</button><button class="btn btn-sm btn-danger" onclick="deleteProvider('${p.id}','${esc(p.name)}')">Delete</button></div></div></div>`;
   }).join('');
+}
+
+function filterProviders() {
+  const query = (document.getElementById('provider-search')?.value || '').trim().toLowerCase();
+  if (!query) {
+    renderProviders(providerList);
+    return;
+  }
+  const filtered = providerList.filter(p => {
+    const haystack = [p.name, p.baseUrl, p.apiType, p.tags].filter(Boolean).join(' ').toLowerCase();
+    return haystack.includes(query);
+  });
+  renderProviders(filtered);
+}
+
+async function loadProviders() {
+  const ps = await fetch(API+'/providers').then(r=>r.json());
+  providerList = ps;
+  providerCache = {};
+  ps.forEach(p => providerCache[p.id] = p);
+  filterProviders();
 }
 
 // ============ MODELS ============
@@ -1961,7 +2023,7 @@ async function runPlayground() {
   btn.textContent = "⏳ Routing...";
   btn.disabled = true;
   document.getElementById("pg-trace").innerHTML = '<div style="color:var(--text-dim);text-align:center;padding:20px">Routing in progress...</div>';
-  document.getElementById("pg-response").innerHTML = "";
+  setPlaygroundResponseState("Waiting for model output...", "muted");
 
   try {
     const resp = await fetch(API + "/test-route", {
@@ -1969,14 +2031,82 @@ async function runPlayground() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model, message, ...(pgSelected?.type === "custom" ? { providerId: pgSelected.providerId } : {}) }),
     });
-    const trace = await resp.json();
-    renderTrace(trace);
+    const result = await resp.json();
+    if (!resp.ok) {
+      const errorMessage = result?.error?.message || result?.error || `Request failed (${resp.status})`;
+      document.getElementById("pg-trace").innerHTML = `<div style="color:var(--red);padding:20px">Error: ${esc(errorMessage)}</div>`;
+      renderPlaygroundResponse({
+        success: false,
+        errorResponse: {
+          status: resp.status,
+          contentType: resp.headers.get("content-type") || "application/json",
+          body: result,
+          raw: typeof result === "string" ? result : JSON.stringify(result, null, 2),
+        }
+      });
+    } else {
+      renderTrace(result);
+      renderPlaygroundResponse(result);
+    }
   } catch (err) {
     document.getElementById("pg-trace").innerHTML = `<div style="color:var(--red);padding:20px">Error: ${esc(err.message)}</div>`;
+    renderPlaygroundResponse({
+      success: false,
+      errorResponse: {
+        status: 0,
+        contentType: "text/plain",
+        raw: err.message,
+      }
+    });
   }
 
   btn.textContent = "▶ Send Test Request";
   btn.disabled = false;
+}
+
+function setPlaygroundResponseState(message, tone = "muted") {
+  const panel = document.getElementById("pg-response-panel");
+  const copyBtn = document.getElementById("pg-response-copy");
+  panel.innerHTML = `<div class="playground-response-empty" style="color:${tone === 'error' ? 'var(--red)' : 'var(--text-dim)'}">${esc(message)}</div>`;
+  copyBtn.disabled = true;
+  window._playgroundResponseCopy = "";
+}
+
+function copyPlaygroundResponse() {
+  if (!window._playgroundResponseCopy) return;
+  navigator.clipboard.writeText(window._playgroundResponseCopy);
+  toast("Copied");
+}
+
+function renderPlaygroundResponse(result) {
+  const panel = document.getElementById("pg-response-panel");
+  const copyBtn = document.getElementById("pg-response-copy");
+  const payload = result?.success ? result?.response : (result?.errorResponse || result?.response);
+
+  if (!payload) {
+    setPlaygroundResponseState(result?.success ? "No response body returned." : "No error response body returned.", result?.success ? "muted" : "error");
+    return;
+  }
+
+  const isError = !result?.success;
+  const statusClass = isError ? "err" : "ok";
+  const statusLabel = payload.status ? `${payload.status} ${isError ? 'Error' : 'Success'}` : (isError ? "Request Error" : "Success");
+  const providerLabel = result?.finalDeployment ? `${result.finalDeployment.provider} / ${result.finalDeployment.model}` : null;
+  const displayText = isError
+    ? (payload.body ? JSON.stringify(payload.body, null, 2) : (payload.raw || "No error response body returned."))
+    : (payload.text || "No textual response extracted from the provider response.");
+
+  panel.innerHTML = `
+    <div class="playground-response-meta">
+      <span class="playground-response-pill ${statusClass}">${esc(statusLabel)}</span>
+      <span class="playground-response-pill">${esc(payload.contentType || 'unknown')}</span>
+      ${providerLabel ? `<span class="playground-response-pill">${esc(providerLabel)}</span>` : ''}
+    </div>
+    <pre class="response-box playground-response-box${isError ? ' error' : ''}">${esc(displayText)}</pre>
+  `;
+
+  window._playgroundResponseCopy = displayText;
+  copyBtn.disabled = !displayText;
 }
 
 function renderTrace(trace) {

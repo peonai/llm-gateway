@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import * as db from "./db";
-import { getCooldownInfo, routeTestDirect, getStickyInfo, clearStickyRoute, setStickyDeployment } from "./router";
+import { getCooldownInfo, routeTestDirect, getStickyInfo, clearStickyRoute, setStickyDeployment, PLAYGROUND_TEST_PATH, routeTestRequest } from "./router";
 
 const api = new Hono();
 
@@ -71,6 +71,11 @@ api.post("/providers/:id/test", async (c) => {
         body: JSON.stringify({ contents: [{ parts: [{ text: "hi" }], role: "user" }] }),
         signal: AbortSignal.timeout(10000),
       });
+      return c.json({ ok: resp.ok, status: resp.status, message: resp.ok ? "Connection successful" : await resp.text().then(t => t.slice(0, 200)) });
+    } else if (p.apiType === "openai-responses") {
+      headers["Authorization"] = `Bearer ${p.apiKey}`;
+      const url = `${baseUrl}/v1/models`;
+      const resp = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
       return c.json({ ok: resp.ok, status: resp.status, message: resp.ok ? "Connection successful" : await resp.text().then(t => t.slice(0, 200)) });
     } else {
       headers["Authorization"] = `Bearer ${p.apiKey}`;
@@ -272,9 +277,6 @@ api.delete("/chains/:id", (c) => {
   return c.json({ ok: true });
 });
 
-// --- Test Route ---
-import { routeTestRequest } from "./router";
-
 api.post("/test-route", async (c) => {
   const body = await c.req.json();
   const model = body.model;
@@ -296,6 +298,6 @@ api.post("/test-route", async (c) => {
     return c.json(trace);
   }
 
-  const trace = await routeTestRequest(model, "/v1/messages", "POST", c.req.raw.headers, testBody);
-  return c.json(trace);
+  const result = await routeTestRequest(model, PLAYGROUND_TEST_PATH, "POST", c.req.raw.headers, testBody);
+  return c.json(result);
 });

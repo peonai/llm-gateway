@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import api from "./api";
-import { routeRequest } from "./router";
+import { getStoredResponseModel, routeRequest, routeRetrieveResponse } from "./router";
 import { getApiKeyByKey, incrementApiKeyUsage, listApiKeys, listModels } from "./db";
 
 const isBun = typeof globalThis.Bun !== "undefined";
@@ -74,10 +74,19 @@ app.use("/v1/*", async (c, next) => {
 
   // Check allowed models
   if (keyRecord.allowedModels) {
-    const body = await c.req.json();
     const allowed = keyRecord.allowedModels.split(",").map((s: string) => s.trim()).filter(Boolean);
-    if (allowed.length > 0 && body.model && !allowed.includes(body.model)) {
-      return c.json({ error: { message: `Model "${body.model}" not allowed for this key`, type: "permission_error" } }, 403);
+    let requestModel = "";
+    if (c.req.method === "GET" && c.req.path.startsWith("/v1/responses/")) {
+      const responseId = c.req.path.split("/").pop() || "";
+      requestModel = getStoredResponseModel(responseId) || "";
+    } else if (!["GET", "HEAD"].includes(c.req.method)) {
+      try {
+        const body = await c.req.json();
+        requestModel = body?.model || "";
+      } catch {}
+    }
+    if (allowed.length > 0 && requestModel && !allowed.includes(requestModel)) {
+      return c.json({ error: { message: `Model "${requestModel}" not allowed for this key`, type: "permission_error" } }, 403);
     }
   }
 
@@ -133,6 +142,52 @@ app.post("/v1/chat/completions", async (c) => {
   return routeRequest(modelName, "/v1/chat/completions", "POST", c.req.raw.headers, body, isStreaming);
 });
 
+// OpenAI Responses API compatible
+app.post("/v1/responses", async (c) => {
+  const body = await c.req.json();
+  const modelName = body.model;
+  const isStreaming = body.stream === true;
+  if (!modelName) {
+    return c.json({ error: { message: "model is required", type: "invalid_request_error" } }, 400);
+  }
+  return routeRequest(modelName, "/v1/responses", "POST", c.req.raw.headers, body, isStreaming);
+});
+
+app.get("/v1/responses/:response_id", async (c) => {
+  const responseId = c.req.param("response_id");
+  if (!responseId) {
+    return c.json({ error: { message: "response_id is required", type: "invalid_request_error" } }, 400);
+  }
+  return routeRetrieveResponse(responseId);
+});
+
+app.post("/v1/embeddings", async (c) => {
+  const body = await c.req.json();
+  const modelName = body.model;
+  if (!modelName) {
+    return c.json({ error: { message: "model is required", type: "invalid_request_error" } }, 400);
+  }
+  return routeRequest(modelName, "/v1/embeddings", "POST", c.req.raw.headers, body, false);
+});
+
+app.post("/v1/rerank", async (c) => {
+  const body = await c.req.json();
+  const modelName = body.model;
+  if (!modelName) {
+    return c.json({ error: { message: "model is required", type: "invalid_request_error" } }, 400);
+  }
+  return routeRequest(modelName, c.req.path, "POST", c.req.raw.headers, body, false);
+});
+
+app.post("/v1/re-rank", async (c) => {
+  const body = await c.req.json();
+  const modelName = body.model;
+  if (!modelName) {
+    return c.json({ error: { message: "model is required", type: "invalid_request_error" } }, 400);
+  }
+  return routeRequest(modelName, "/v1/rerank", "POST", c.req.raw.headers, body, false);
+});
+
 // Anthropic compatible
 app.post("/v1/messages", async (c) => {
   const body = await c.req.json();
@@ -151,7 +206,11 @@ app.post("/v1beta/models/*", async (c) => {
   if (!match) {
     return c.json({ error: { message: "Invalid Gemini API path", type: "invalid_request_error" } }, 400);
   }
-  const [, modelName, action] = match;
+  const modelName = match[1];
+  const action = match[2];
+  if (!modelName || !action) {
+    return c.json({ error: { message: "Invalid Gemini API path", type: "invalid_request_error" } }, 400);
+  }
   const body = await c.req.json();
   const isStreaming = action === "streamGenerateContent";
   return routeRequest(modelName, `/v1beta/models/${modelName}:${action}`, "POST", c.req.raw.headers, body, isStreaming);
@@ -164,7 +223,11 @@ app.post("/v1/models/*", async (c) => {
   if (!match) {
     return c.json({ error: { message: "Invalid Gemini API path", type: "invalid_request_error" } }, 400);
   }
-  const [, modelName, action] = match;
+  const modelName = match[1];
+  const action = match[2];
+  if (!modelName || !action) {
+    return c.json({ error: { message: "Invalid Gemini API path", type: "invalid_request_error" } }, 400);
+  }
   const body = await c.req.json();
   const isStreaming = action === "streamGenerateContent";
   return routeRequest(modelName, `/v1beta/models/${modelName}:${action}`, "POST", c.req.raw.headers, body, isStreaming);
